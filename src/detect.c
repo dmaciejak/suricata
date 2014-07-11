@@ -108,6 +108,7 @@
 #include "detect-pktvar.h"
 #include "detect-noalert.h"
 #include "detect-flowbits.h"
+#include "detect-timeout.h"
 #include "detect-csum.h"
 #include "detect-stream_size.h"
 #include "detect-engine-sigorder.h"
@@ -4757,6 +4758,7 @@ void SigTableSetup(void)
     DetectPktvarRegister();
     DetectNoalertRegister();
     DetectFlowbitsRegister();
+    DetectTimeoutRegister();
     DetectEngineEventRegister();
     DetectIpOptsRegister();
     DetectFlagsRegister();
