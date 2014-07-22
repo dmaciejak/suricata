@@ -47,8 +47,14 @@
 #include "tm-threads.h"
 
 #include "util-debug.h"
+#include "util-logopenfile.h"
 #include "util-privs.h"
 #include "util-signal.h"
+#include "util-time.h"
+
+#ifdef HAVE_LIBJANSSON
+#include <jansson.h>
+#endif
 
 /* Time interval in second at which the thread o/p the timeout */
 #define DETECT_TIMEOUT_TTS  8
@@ -65,6 +71,11 @@ typedef struct DetectTimeoutPacket_ {
     uint32_t    max, threshold;
     uint8_t     flags;
 
+#ifdef HAVE_LIBJANSSON
+    json_t      *js;
+#endif
+    Signature   *s; /* Pointer to signature */
+
     TAILQ_ENTRY(DetectTimeoutPacket_) next;
 } DetectTimeoutPacket;
 
@@ -77,6 +88,10 @@ struct DetectTimeoutContext_ {
     uint8_t flags;
 
     TAILQ_HEAD(, DetectTimeoutPacket_) packet_list;
+
+#ifdef HAVE_LIBJANSSON
+    LogFileCtx  *file_ctx;
+#endif
 } ctx;
 
 #define DETECT_TIMEOUT_CONTEXT_ENABLE   (1<<0)
@@ -113,26 +128,40 @@ int DetectTimeoutMatch(ThreadVars               *t,
         SCReturn(0);
 
     if (packet->flags & DETECT_TIMEOUT_PACKET_ENABLE) {
-        // Compute time difference between previous packet and previous Timeout thread wake-up
+        /* Compute time difference between previous packet and previous Timeout thread wake-up */
         diff_t = difftime(packet->tp.tv_sec, ctx.tc.tv_sec);
 
-        // Compute time difference between the current and the previous packet
+        /* Compute time difference between the current and the previous packet */
         diff = (uint32_t) difftime(p->ts.tv_sec, packet->tp.tv_sec) * DETECT_TIMEOUT_SECOND;
         diff += (p->ts.tv_usec - packet->tp.tv_usec);
 
-        // Check and store the highest time difference
-        if ((diff_t > 0)                                                 ||
-            ((diff_t == 0) && (packet->tp.tv_usec > ctx.tc.tv_usec))     ||
-            ((diff_t < 0) && (diff > packet->max))                        )
+        /* Check and store the highest time difference */
+        if ((diff_t > 0)                                             ||
+            ((diff_t == 0) && (packet->tp.tv_usec > ctx.tc.tv_usec)) ||
+            ((diff_t < 0) && (diff > packet->max)))
             packet->max = diff;
     } else {
-        // Enable Data Timeout context
+        /* Enable Data Timeout context */
         packet->flags |= DETECT_TIMEOUT_PACKET_ENABLE;
+
+#ifdef HAVE_LIBJANSSON
+        json_t *js = json_object();
+        if (unlikely(js == NULL))
+            SCReturn(0);
+
+        json_object_set_new(js, "signature_id", json_integer(s->id));
+        json_object_set_new(js, "rev", json_integer(s->rev));
+        json_object_set_new(js, "signature", json_string((s->msg) ? s->msg : ""));
+
+        packet->js = js;
+#endif
+        /* Store a pointer to signature */
+        packet->s = s;
     }
 
     // Store the current packet time
-    packet->tp.tv_sec     = p->ts.tv_sec;
-    packet->tp.tv_usec    = p->ts.tv_usec;
+    packet->tp.tv_sec   = p->ts.tv_sec;
+    packet->tp.tv_usec  = p->ts.tv_usec;
 
     SCReturn(0);
 }
@@ -171,15 +200,16 @@ static void *DetectTimeoutThread(void *arg)
 
     struct timeval now;
 
+    char timebuf[64];
     double diff_t;
 
     uint32_t    diff;
     uint8_t     run = 1;
 
-    // block usr2.  usr2 to be handled by the main thread only
+    /* block usr2.  usr2 to be handled by the main thread only */
     UtilSignalBlock(SIGUSR2);
 
-    // Set the thread name
+    /* Set the thread name */
     if (SCSetThreadName(tv->name) < 0) {
         SCLogWarning(SC_ERR_THREAD_INIT, "Unable to set thread name");
     }
@@ -187,7 +217,7 @@ static void *DetectTimeoutThread(void *arg)
     if (tv->thread_setup_flags != 0)
         TmThreadSetupOptions(tv);
 
-    // Set the threads capability
+    /* Set the threads capability */
     tv->cap_flags = 0;
 
     SCDropCaps(tv);
@@ -202,31 +232,42 @@ static void *DetectTimeoutThread(void *arg)
 
         sleep(DETECT_TIMEOUT_TTS);
 
-        // Get the current time
+        /* Get the current time */
         memset(&now, 0, sizeof(now));
         TimeGet(&now);
+        CreateIsoTimeString(&now, timebuf, sizeof(timebuf));
 
         TAILQ_FOREACH(packet, &ctx.packet_list, next) {
             if (!(packet->flags & DETECT_TIMEOUT_PACKET_ENABLE))
                 continue;
 
-            // Compute time difference between previous packet and previous Timeout thread wake-up
+            /* Compute time difference between previous packet and previous Timeout thread wake-up */
             diff_t = difftime(ctx.tc.tv_sec, packet->tp.tv_sec);
 
             if ((diff_t > 0) || ((diff_t == 0) && (ctx.tc.tv_usec > packet->tp.tv_usec))) {
-                // Compute time difference between previous wake-up and the previous received packet
+                /* Compute time difference between previous wake-up and the previous received packet */
                 diff = (uint32_t) difftime(now.tv_sec, packet->tp.tv_sec) * DETECT_TIMEOUT_SECOND;
                 diff += (now.tv_usec - packet->tp.tv_usec);
 
                 if (diff > packet->threshold) {
                     if (!(packet->flags & DETECT_TIMEOUT_PACKET_ALARM)) {
-                        SCLogWarning(SC_OK, "Alert Timeout");
+#ifdef HAVE_LIBJANSSON
+                        /* time */
+                        json_object_set_new(packet->js, "timestamp", json_string(timebuf));
+#endif
+                        SCLogWarning(SC_OK, "Alert Timeout sid:%u rev:%d msg:\"%s\" timestamp:%s",
+                                packet->s->id, packet->s->rev, (packet->s->msg)? packet->s->msg : "", timebuf);
                         packet->flags |= DETECT_TIMEOUT_PACKET_ALARM;
                     }
                 }
             } else {
                 if (packet->max > packet->threshold) {
-                    SCLogWarning(SC_OK, "Alert Timeout");
+#ifdef HAVE_LIBJANSSON
+                    /* time */
+                    json_object_set_new(packet->js, "timestamp", json_string(timebuf));
+#endif
+                    SCLogWarning(SC_OK, "Alert Timeout sid:%u rev:%d msg:\"%s\" timestamp:%s",
+                            packet->s->id, packet->s->rev, (packet->s->msg)? packet->s->msg : "", timebuf);
                     packet->flags |= DETECT_TIMEOUT_PACKET_ALARM;
                 } else {
                     packet->flags &= ~DETECT_TIMEOUT_PACKET_ALARM;
@@ -234,7 +275,7 @@ static void *DetectTimeoutThread(void *arg)
             }
         }
 
-        // Update Timeout thread timers
+        /* Update Timeout thread timers */
         ctx.tc.tv_sec   = now.tv_sec;
         ctx.tc.tv_usec  = now.tv_usec;
 
@@ -257,20 +298,20 @@ void DetectTimeoutInitThread(void)
     SCEnter();
     ThreadVars *tv = NULL;
 
-    // Create Detect timeout thread
+    /* Create Detect timeout thread */
     tv = TmThreadCreateMgmtThread("DetectTimeoutThread", DetectTimeoutThread, 0);
     if (tv == NULL) {
         SCLogError(SC_ERR_THREAD_CREATE, "TmThreadCreateMgmtThread " "failed");
         exit(EXIT_FAILURE);
     }
 
-    // Spawn thread
+    /* Spawn thread */
     if (TmThreadSpawn(tv) != 0) {
         SCLogError(SC_ERR_THREAD_SPAWN, "TmThreadSpawn failed for " "DetectTimeoutThread");
         exit(EXIT_FAILURE);
     }
 
-    // Set Timeout thread priority as High
+    /* Set Timeout thread priority as High */
     TmThreadSetThreadPriority(tv, PRIO_HIGH);
 
     SCReturn;
@@ -315,10 +356,10 @@ static int DetectTimeoutSetup (DetectEngineCtx *de_ctx, Signature *s, char *str)
         goto error;
     }
 
-    // Extract threshold value
+    /* Extract threshold value */
     threshold = atoi((const char*) arg);
 
-    // Convert threshold value according to its unit
+    /* Convert threshold value according to its unit */
     if (strncmp(unit,"s",1) == 0) {
         if (threshold > DETECT_TIMEOUT_MAX) {
             SCLogError(SC_ERR_UNKNOWN_VALUE, "ERROR: timeout value \"%d\"s is not supported.", threshold);
@@ -335,7 +376,7 @@ static int DetectTimeoutSetup (DetectEngineCtx *de_ctx, Signature *s, char *str)
         goto error;
     }
 
-    // Initialize a Data Timeout structure and insert it to Data list
+    /* Initialize a Data Timeout structure and insert it to Data list */
     packet = (DetectTimeoutPacket *) SCCalloc(1, sizeof(DetectTimeoutPacket));
     if (packet == NULL)
         goto error;
@@ -343,13 +384,13 @@ static int DetectTimeoutSetup (DetectEngineCtx *de_ctx, Signature *s, char *str)
 
     TAILQ_INSERT_TAIL(&ctx.packet_list, packet, next);
 
-    // Initialize Timeout thread if it has not already done
+    /* Initialize Timeout thread if it has not already done */
     if (!(ctx.flags & DETECT_TIMEOUT_CONTEXT_ENABLE)) {
         DetectTimeoutInitThread();
         ctx.flags |= DETECT_TIMEOUT_CONTEXT_ENABLE;
     }
 
-    // Okay so far so good, lets get this into a SigMatch and put it in the Signature.
+    /* Okay so far so good, lets get this into a SigMatch and put it in the Signature */
     sm = SigMatchAlloc();
     if (sm == NULL)
         goto error;
@@ -357,7 +398,7 @@ static int DetectTimeoutSetup (DetectEngineCtx *de_ctx, Signature *s, char *str)
     sm->type = DETECT_TIMEOUT;
     sm->ctx = (void *) packet;
 
-    // Do not generate any alert
+    /* Do not generate any alert */
     s->flags |= SIG_FLAG_NOALERT;
 
     /* modifiers, only run when entire sig has matched */
@@ -372,6 +413,7 @@ error:
     SCReturn(1);
 }
 
+#define DEFAULT_LOG_FILENAME "timeout.json"
 /**
  * \brief Registration function for timeout keyword
  */
@@ -382,14 +424,24 @@ void DetectTimeoutRegister (void) {
 
     sigmatch_table[DETECT_TIMEOUT].name             = "timeout";
     sigmatch_table[DETECT_TIMEOUT].desc             = "operate on timeout flag";
-    sigmatch_table[DETECT_TIMEOUT].Match             = DetectTimeoutMatch;
-    sigmatch_table[DETECT_TIMEOUT].Setup             = DetectTimeoutSetup;
-    sigmatch_table[DETECT_TIMEOUT].Free              = DetectTimeoutFree;
-    sigmatch_table[DETECT_TIMEOUT].RegisterTests     = DetectTimeoutRegisterTests;
+    sigmatch_table[DETECT_TIMEOUT].Match            = DetectTimeoutMatch;
+    sigmatch_table[DETECT_TIMEOUT].Setup            = DetectTimeoutSetup;
+    sigmatch_table[DETECT_TIMEOUT].Free             = DetectTimeoutFree;
+    sigmatch_table[DETECT_TIMEOUT].RegisterTests    = DetectTimeoutRegisterTests;
 
-    // Initialize Timeout context
+    /* Initialize Timeout context */
     memset(&ctx, 0, sizeof(ctx));
     TAILQ_INIT(&ctx.packet_list);
+
+#ifdef HAVE_LIBJANSSON
+    ctx.file_ctx = LogFileNewCtx();
+    if(ctx.file_ctx == NULL) {
+        SCLogError(SC_ERR_DNS_LOG_GENERIC, "couldn't create new file_ctx");
+        goto error;
+    }
+
+    SCLogDebug("Timeout log output initialized");
+#endif
 
     parse_regex = pcre_compile(PARSE_REGEX, opts, &eb, &eo, NULL);
     if(parse_regex == NULL)
@@ -406,6 +458,11 @@ void DetectTimeoutRegister (void) {
     }
 
 error:
+#ifdef HAVE_LIBJANSSON
+    if(ctx.file_ctx != NULL)
+        LogFileFreeCtx(ctx.file_ctx);
+#endif
+
     SCReturn;
 }
 
