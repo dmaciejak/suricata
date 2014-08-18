@@ -1,0 +1,16 @@
+# S7 event rules
+#
+# SID's fall in the 5000000 range
+#
+#
+#
+#
+#
+#
+#
+alert tcp any any -> any 102 (flow:from_client, established; content:"|32 01|"; offset:0; depth:2; content:"|1A|"; offset:10; depth:1;  msg:"request for uploading to PLC detected"; sid:5000001; rev:1;) 
+alert tcp any any -> any 102 (flow:from_client, established; content:"|32 01|"; offset:0; depth:2; content:"|1D|"; offset:10; depth:1;  msg:"request for downloading PLC detected"; sid:5000002; rev:1;) 
+alert tcp any any -> any 102 (flow:from_client, established; content:"|32 01|"; offset:0; depth:2; content:"|1D|"; offset:10; depth:1;  msg:"request for downloading PLC detected"; sid:5000003; rev:1;) 
+alert tcp any any -> any 102 (flow:from_client, established; content:"|32 01|"; offset:0; depth:2; content:"|29|"; offset:10; depth:1;  msg:"request for stopping PLC detected"; sid:5000004; rev:1;) 
+alert tcp any any -> any 102 (flow:from_client, established; content:"|32 01|"; offset:0; depth:2; content:"|04|"; offset:10; depth:1;  msg:"request for reading variable on PLC detected"; sid:5000005; rev:1;) 
+alert tcp any any -> any 102 (flow:from_client, established; content:"|32 01|"; offset:0; depth:2; content:"|05|"; offset:10; depth:1;  msg:"request for writting variable on PLC detected"; sid:5000006; rev:1;) 
