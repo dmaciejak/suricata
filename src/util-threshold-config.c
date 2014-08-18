@@ -461,7 +461,7 @@ static int SetupThresholdRule(DetectEngineCtx *de_ctx, uint32_t id, uint32_t gid
                         "an event var set.  The signature event var is "
                         "given precedence over the threshold.conf one.  "
                         "We'll change this in the future though.", s->id);
-                goto end;
+                continue;
             }
 
             sm = SigMatchGetLastSMFromLists(s, 2,
@@ -471,7 +471,7 @@ static int SetupThresholdRule(DetectEngineCtx *de_ctx, uint32_t id, uint32_t gid
                         "an event var set.  The signature event var is "
                         "given precedence over the threshold.conf one.  "
                         "We'll change this in the future though.", s->id);
-                goto end;
+                continue;
             }
 
             de = SCMalloc(sizeof(DetectThresholdData));
@@ -525,7 +525,7 @@ static int SetupThresholdRule(DetectEngineCtx *de_ctx, uint32_t id, uint32_t gid
                             "an event var set.  The signature event var is "
                             "given precedence over the threshold.conf one.  "
                             "We'll change this in the future though.", id);
-                    goto end;
+                    continue;
                 }
 
                 sm = SigMatchGetLastSMFromLists(s, 2,
@@ -535,7 +535,7 @@ static int SetupThresholdRule(DetectEngineCtx *de_ctx, uint32_t id, uint32_t gid
                             "an event var set.  The signature event var is "
                             "given precedence over the threshold.conf one.  "
                             "We'll change this in the future though.", id);
-                    goto end;
+                    continue;
                 }
 
                 de = SCMalloc(sizeof(DetectThresholdData));
@@ -1118,7 +1118,8 @@ int SCThresholdConfLineIsMultiline(char *line)
  * \param fd Pointer to file descriptor.
  * \retval int of the line length
  */
-int SCThresholdConfLineLength(FILE *fd) {
+int SCThresholdConfLineLength(FILE *fd)
+{
     long pos = ftell(fd);
     int len = 0;
     int c;

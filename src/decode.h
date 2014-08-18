@@ -56,6 +56,7 @@ enum PktSrcEnum {
     PKT_SRC_FFR_SHUTDOWN,
 };
 
+#include "source-nflog.h"
 #include "source-nfq.h"
 #include "source-ipfw.h"
 #include "source-pcap.h"
@@ -86,6 +87,8 @@ enum PktSrcEnum {
 /* forward declarations */
 struct DetectionEngineThreadCtx_;
 typedef struct AppLayerThreadCtx_ AppLayerThreadCtx;
+
+struct PktPool_;
 
 /* declare these here as they are called from the
  * PACKET_RECYCLE and PACKET_CLEANUP macro's. */
@@ -395,6 +398,9 @@ typedef struct Packet_
 
     union {
         /* nfq stuff */
+#ifdef HAVE_NFLOG
+        NFLOGPacketVars nflog_v;
+#endif /* HAVE_NFLOG */
 #ifdef NFQ
         NFQPacketVars nfq_v;
 #endif /* NFQ */
@@ -524,6 +530,10 @@ typedef struct Packet_
     /* tunnel packet ref count */
     uint16_t tunnel_tpr_cnt;
 
+    /* The Packet pool from which this packet was allocated. Used when returning
+     * the packet to its owner's stack. If NULL, then allocated with malloc.
+     */
+    struct PktPool_ *pool;
 
 #ifdef PROFILING
     PktProfiling *profile;
@@ -562,6 +572,9 @@ typedef struct DecodeThreadVars_
     AppLayerThreadCtx *app_tctx;
 
     int vlan_disabled;
+
+    /* thread data for flow logging api */
+    void *output_flow_thread_data;
 
     /** stats/counters */
     uint16_t counter_pkts;
@@ -610,6 +623,16 @@ typedef struct DecodeThreadVars_
         (p)->level4_comp_csum = -1;   \
     } while (0)
 
+/* if p uses extended data, free them */
+#define PACKET_FREE_EXTDATA(p) do {                 \
+        if ((p)->ext_pkt) {                         \
+            if (!((p)->flags & PKT_ZERO_COPY)) {    \
+                SCFree((p)->ext_pkt);               \
+            }                                       \
+            (p)->ext_pkt = NULL;                    \
+        }                                           \
+    } while(0)
+
 /**
  *  \brief Initialize a packet structure for use.
  */
@@ -633,24 +656,29 @@ typedef struct DecodeThreadVars_
 }
 #endif
 
+#define PACKET_RELEASE_REFS(p) do {              \
+        FlowDeReference(&((p)->flow));          \
+        HostDeReference(&((p)->host_src));      \
+        HostDeReference(&((p)->host_dst));      \
+    } while (0)
+
 /**
  *  \brief Recycle a packet structure for reuse.
- *  \todo the mutex destroy & init is necessary because of the memset, reconsider
  */
-#define PACKET_DO_RECYCLE(p) do {               \
+#define PACKET_REINIT(p) do {             \
         CLEAR_ADDR(&(p)->src);                  \
         CLEAR_ADDR(&(p)->dst);                  \
         (p)->sp = 0;                            \
         (p)->dp = 0;                            \
         (p)->proto = 0;                         \
         (p)->recursion_level = 0;               \
+        PACKET_FREE_EXTDATA((p));               \
         (p)->flags = (p)->flags & PKT_ALLOC;    \
         (p)->flowflags = 0;                     \
         (p)->pkt_src = 0;                       \
         (p)->vlan_id[0] = 0;                    \
         (p)->vlan_id[1] = 0;                    \
         (p)->vlan_idx = 0;                      \
-        FlowDeReference(&((p)->flow));          \
         (p)->ts.tv_sec = 0;                     \
         (p)->ts.tv_usec = 0;                    \
         (p)->datalink = 0;                      \
@@ -691,13 +719,9 @@ typedef struct DecodeThreadVars_
         (p)->payload_len = 0;                   \
         (p)->pktlen = 0;                        \
         (p)->alerts.cnt = 0;                    \
-        HostDeReference(&((p)->host_src));      \
-        HostDeReference(&((p)->host_dst));      \
         (p)->pcap_cnt = 0;                      \
         (p)->tunnel_rtv_cnt = 0;                \
         (p)->tunnel_tpr_cnt = 0;                \
-        SCMutexDestroy(&(p)->tunnel_mutex);     \
-        SCMutexInit(&(p)->tunnel_mutex, NULL);  \
         (p)->events.cnt = 0;                    \
         AppLayerDecoderEventsResetEvents((p)->app_layer_events); \
         (p)->next = NULL;                       \
@@ -708,15 +732,19 @@ typedef struct DecodeThreadVars_
         PACKET_PROFILING_RESET((p));            \
     } while (0)
 
-#define PACKET_RECYCLE(p) PACKET_DO_RECYCLE((p))
+#define PACKET_RECYCLE(p) do { \
+        PACKET_RELEASE_REFS((p)); \
+        PACKET_REINIT((p)); \
+    } while (0)
 
 /**
  *  \brief Cleanup a packet so that we can free it. No memset needed..
  */
-#define PACKET_CLEANUP(p) do {                  \
+#define PACKET_DESTRUCTOR(p) do {                  \
         if ((p)->pktvar != NULL) {              \
             PktVarFree((p)->pktvar);            \
         }                                       \
+        PACKET_FREE_EXTDATA((p));               \
         SCMutexDestroy(&(p)->tunnel_mutex);     \
         AppLayerDecoderEventsFreeEvents(&(p)->app_layer_events); \
         PACKET_PROFILING_RESET((p));            \
@@ -808,7 +836,7 @@ int PacketCopyDataOffset(Packet *p, int offset, uint8_t *data, int datalen);
 const char *PktSrcToString(enum PktSrcEnum pkt_src);
 
 DecodeThreadVars *DecodeThreadVarsAlloc(ThreadVars *);
-void DecodeThreadVarsFree(DecodeThreadVars *);
+void DecodeThreadVarsFree(ThreadVars *, DecodeThreadVars *);
 
 /* decoder functions */
 int DecodeEthernet(ThreadVars *, DecodeThreadVars *, Packet *, uint8_t *, uint16_t, PacketQueue *);
@@ -888,6 +916,19 @@ void AddressDebugPrint(Address *);
  */
 #ifndef IPPROTO_SCTP
 #define IPPROTO_SCTP 132
+#endif
+
+#ifndef IPPROTO_MH
+#define IPPROTO_MH 135
+#endif
+
+/* Host Identity Protocol (rfc 5201) */
+#ifndef IPPROTO_HIP
+#define IPPROTO_HIP 139
+#endif
+
+#ifndef IPPROTO_SHIM6
+#define IPPROTO_SHIM6 140
 #endif
 
 /* pcap provides this, but we don't want to depend on libpcap */

@@ -9,7 +9,6 @@ bin_PROGRAMS = suricata
 suricata_SOURCES = \
 alert-debuglog.c alert-debuglog.h \
 alert-fastlog.c alert-fastlog.h \
-alert-pcapinfo.c alert-pcapinfo.h \
 alert-prelude.c alert-prelude.h \
 alert-syslog.c alert-syslog.h \
 alert-unified2-alert.c alert-unified2-alert.h \
@@ -216,10 +215,13 @@ log-tlslog.c log-tlslog.h \
 output.c output.h \
 output-file.c output-file.h \
 output-filedata.c output-filedata.h \
+output-flow.c output-flow.h \
 output-json-alert.c output-json-alert.h \
 output-json-dns.c output-json-dns.h \
 output-json-drop.c output-json-drop.h \
 output-json-file.c output-json-file.h \
+output-json-flow.c output-json-flow.h \
+output-json-netflow.c output-json-netflow.h \
 output-json-http.c output-json-http.h \
 output-json-ssh.c output-json-ssh.h \
 output-json-tls.c output-json-tls.h \
@@ -237,6 +239,7 @@ runmode-erf-file.c runmode-erf-file.h \
 runmode-ipfw.c runmode-ipfw.h \
 runmode-napatech.c runmode-napatech.h \
 runmode-nfq.c runmode-nfq.h \
+runmode-nflog.c runmode-nflog.h \
 runmode-pcap.c runmode-pcap.h \
 runmode-pcap-file.c runmode-pcap-file.h \
 runmode-pfring.c runmode-pfring.h \
@@ -251,6 +254,7 @@ source-ipfw.c source-ipfw.h \
 source-mpipe.c source-mpipe.h \
 source-napatech.c source-napatech.h \
 source-nfq.c source-nfq.h \
+source-nflog.c source-nflog.h \
 source-pcap.c source-pcap.h \
 source-pcap-file.c source-pcap-file.h \
 source-pfring.c source-pfring.h \

@@ -32,23 +32,33 @@
 
 #define DNS_MAX_SIZE 256
 
-#define DNS_RECORD_TYPE_A       0x0001
-#define DNS_RECORD_TYPE_NS      0x0002
+#define DNS_RECORD_TYPE_A       1
+#define DNS_RECORD_TYPE_NS      2
 
-#define DNS_RECORD_TYPE_CNAME   0x0005
-#define DNS_RECORD_TYPE_SOA     0x0006
+#define DNS_RECORD_TYPE_CNAME   5
+#define DNS_RECORD_TYPE_SOA     6
 
-#define DNS_RECORD_TYPE_TXT     0x0010
+#define DNS_RECORD_TYPE_PTR     12
+#define DNS_RECORD_TYPE_MX      15
+#define DNS_RECORD_TYPE_TXT     16
 
-#define DNS_RECORD_TYPE_PTR     0x000c
-#define DNS_RECORD_TYPE_MX      0x000f
+#define DNS_RECORD_TYPE_AAAA    28
 
-#define DNS_RECORD_TYPE_AAAA    0x001c
+#define DNS_RECORD_TYPE_SRV     33
 
-#define DNS_RECORD_TYPE_ANY     0x00ff
+#define DNS_RECORD_TYPE_NAPTR   35
 
-#define DNS_RECORD_TYPE_TKEY    0x00f9
-#define DNS_RECORD_TYPE_TSIG    0x00fa /**< XXX correct? */
+#define DNS_RECORD_TYPE_DS      43
+
+#define DNS_RECORD_TYPE_RRSIG   46
+#define DNS_RECORD_TYPE_NSEC    47
+
+#define DNS_RECORD_TYPE_NSEC3   50
+
+#define DNS_RECORD_TYPE_TKEY    249
+#define DNS_RECORD_TYPE_TSIG    250
+
+#define DNS_RECORD_TYPE_ANY     255
 
 enum {
     DNS_DECODER_EVENT_UNSOLLICITED_RESPONSE,
@@ -68,12 +78,12 @@ typedef struct DNSHeader_ {
     uint16_t answer_rr;
     uint16_t authority_rr;
     uint16_t additional_rr;
-} DNSHeader;
+} __attribute__((__packed__)) DNSHeader;
 
 typedef struct DNSQueryTrailer_ {
     uint16_t type;
     uint16_t class;
-} DNSQueryTrailer;
+} __attribute__((__packed__)) DNSQueryTrailer;
 
 /** \brief DNS answer header
  *  packed as we don't want alignment to mess up sizeof() */
@@ -211,5 +221,7 @@ const uint8_t *DNSReponseParse(DNSState *dns_state, const DNSHeader * const dns_
 
 uint16_t DNSUdpResponseGetNameByOffset(const uint8_t * const input, const uint32_t input_len,
         const uint16_t offset, uint8_t *fqdn, const size_t fqdn_size);
+
+void DNSCreateTypeString(uint16_t type, char *str, size_t str_size);
 
 #endif /* __APP_LAYER_DNS_COMMON_H__ */

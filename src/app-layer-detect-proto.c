@@ -190,9 +190,9 @@ static AppProto AppLayerProtoDetectPMMatchSignature(const AppLayerProtoDetectPMS
                s->cd->offset, s->cd->depth);
 
     if (s->cd->flags & DETECT_CONTENT_NOCASE)
-        found = BoyerMooreNocase(s->cd->content, s->cd->content_len, sbuf, sbuflen, s->cd->bm_ctx->bmGs, s->cd->bm_ctx->bmBc);
+        found = BoyerMooreNocase(s->cd->content, s->cd->content_len, sbuf, sbuflen, s->cd->bm_ctx);
     else
-        found = BoyerMoore(s->cd->content, s->cd->content_len, sbuf, sbuflen, s->cd->bm_ctx->bmGs, s->cd->bm_ctx->bmBc);
+        found = BoyerMoore(s->cd->content, s->cd->content_len, sbuf, sbuflen, s->cd->bm_ctx);
     if (found != NULL)
         proto = s->alproto;
 
@@ -1253,8 +1253,10 @@ static int AppLayerProtoDetectPMRegisterPattern(uint8_t ipproto, AppProto alprot
         goto error;
     cd->depth = depth;
     cd->offset = offset;
-    if (!is_cs)
+    if (!is_cs) {
+        BoyerMooreCtxToNocase(cd->bm_ctx, cd->content, cd->content_len);
         cd->flags |= DETECT_CONTENT_NOCASE;
+    }
     if (depth < cd->content_len)
         goto error;
 
@@ -1490,11 +1492,13 @@ int AppLayerProtoDetectPMRegisterPatternCS(uint8_t ipproto, AppProto alproto,
                                            uint8_t direction)
 {
     SCEnter();
-    SCReturnInt(AppLayerProtoDetectPMRegisterPattern(ipproto, alproto,
+    int r = 0;
+    r = AppLayerProtoDetectPMRegisterPattern(ipproto, alproto,
                                                      pattern,
                                                      depth, offset,
                                                      direction,
-                                                     1 /* case-sensitive */));
+                                                     1 /* case-sensitive */);
+    SCReturnInt(r);
 }
 
 int AppLayerProtoDetectPMRegisterPatternCI(uint8_t ipproto, AppProto alproto,
@@ -1503,11 +1507,13 @@ int AppLayerProtoDetectPMRegisterPatternCI(uint8_t ipproto, AppProto alproto,
                                            uint8_t direction)
 {
     SCEnter();
-    SCReturnInt(AppLayerProtoDetectPMRegisterPattern(ipproto, alproto,
+    int r = 0;
+    r = AppLayerProtoDetectPMRegisterPattern(ipproto, alproto,
                                                      pattern,
                                                      depth, offset,
                                                      direction,
-                                                     0 /* !case-sensitive */));
+                                                     0 /* !case-sensitive */);
+    SCReturnInt(r);
 }
 
 /***** Setup/General Registration *****/

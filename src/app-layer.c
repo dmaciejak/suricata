@@ -554,13 +554,15 @@ int AppLayerHandleUdp(ThreadVars *tv, AppLayerThreadCtx *tctx, Packet *p, Flow *
 AppProto AppLayerGetProtoByName(char *alproto_name)
 {
     SCEnter();
-    SCReturnCT(AppLayerProtoDetectGetProtoByName(alproto_name), "AppProto");
+    AppProto r = AppLayerProtoDetectGetProtoByName(alproto_name);
+    SCReturnCT(r, "AppProto");
 }
 
 char *AppLayerGetProtoName(AppProto alproto)
 {
     SCEnter();
-    SCReturnCT(AppLayerProtoDetectGetProtoName(alproto), "char *");
+    char * r = AppLayerProtoDetectGetProtoName(alproto);
+    SCReturnCT(r, "char *");
 }
 
 void AppLayerListSupportedProtocols(void)
@@ -656,13 +658,15 @@ void AppLayerDestroyCtxThread(AppLayerThreadCtx *app_tctx)
 
 /* profiling */
 
-void AppLayerProfilingReset(AppLayerThreadCtx *app_tctx) {
+void AppLayerProfilingReset(AppLayerThreadCtx *app_tctx)
+{
 #ifdef PROFILING
     PACKET_PROFILING_APP_RESET(app_tctx);
 #endif
 }
 
-void AppLayerProfilingStore(AppLayerThreadCtx *app_tctx, Packet *p) {
+void AppLayerProfilingStore(AppLayerThreadCtx *app_tctx, Packet *p)
+{
 #ifdef PROFILING
     PACKET_PROFILING_APP_STORE(app_tctx, p);
 #endif

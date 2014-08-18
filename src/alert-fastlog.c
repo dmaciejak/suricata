@@ -77,7 +77,8 @@ static void AlertFastLogDeInitCtx(OutputCtx *);
 int AlertFastLogCondition(ThreadVars *tv, const Packet *p);
 int AlertFastLogger(ThreadVars *tv, void *data, const Packet *p);
 
-void TmModuleAlertFastLogRegister (void) {
+void TmModuleAlertFastLogRegister (void)
+{
     tmm_modules[TMM_ALERTFASTLOG].name = MODULE_NAME;
     tmm_modules[TMM_ALERTFASTLOG].ThreadInit = AlertFastLogThreadInit;
     tmm_modules[TMM_ALERTFASTLOG].ThreadExitPrintStats = AlertFastLogExitPrintStats;
@@ -95,7 +96,8 @@ typedef struct AlertFastLogThread_ {
     LogFileCtx* file_ctx;
 } AlertFastLogThread;
 
-int AlertFastLogCondition(ThreadVars *tv, const Packet *p) {
+int AlertFastLogCondition(ThreadVars *tv, const Packet *p)
+{
     return (p->alerts.cnt ? TRUE : FALSE);
 }
 
@@ -252,6 +254,7 @@ OutputCtx *AlertFastLogInitCtx(ConfNode *conf)
         LogFileFreeCtx(logfile_ctx);
         return NULL;
     }
+    OutputRegisterFileRotationFlag(&logfile_ctx->rotation_flag);
 
     OutputCtx *output_ctx = SCCalloc(1, sizeof(OutputCtx));
     if (unlikely(output_ctx == NULL))
@@ -265,6 +268,7 @@ OutputCtx *AlertFastLogInitCtx(ConfNode *conf)
 static void AlertFastLogDeInitCtx(OutputCtx *output_ctx)
 {
     LogFileCtx *logfile_ctx = (LogFileCtx *)output_ctx->data;
+    OutputUnregisterFileRotationFlag(&logfile_ctx->rotation_flag);
     LogFileFreeCtx(logfile_ctx);
     SCFree(output_ctx);
 }

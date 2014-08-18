@@ -216,13 +216,11 @@ static TmEcode AlertDebugLogger(ThreadVars *tv, const Packet *p, void *thread_da
         FLOWLOCK_RDLOCK(p->flow);
         CreateTimeString(&p->flow->startts, timebuf, sizeof(timebuf));
         MemBufferWriteString(aft->buffer, "FLOW Start TS:     %s\n", timebuf);
-#ifdef DEBUG
         MemBufferWriteString(aft->buffer, "FLOW PKTS TODST:   %"PRIu32"\n"
                              "FLOW PKTS TOSRC:   %"PRIu32"\n"
                              "FLOW Total Bytes:  %"PRIu64"\n",
                              p->flow->todstpktcnt, p->flow->tosrcpktcnt,
-                             p->flow->bytecnt);
-#endif
+                             p->flow->todstbytecnt + p->flow->tosrcbytecnt);
         MemBufferWriteString(aft->buffer,
                              "FLOW IPONLY SET:   TOSERVER: %s, TOCLIENT: %s\n"
                              "FLOW ACTION:       DROP: %s\n"
@@ -382,8 +380,8 @@ static TmEcode AlertDebugLogDecoderEvent(ThreadVars *tv, const Packet *p, void *
                          GET_PKT_DATA(p), GET_PKT_LEN(p));
 
     SCMutexLock(&aft->file_ctx->fp_mutex);
-    (void)MemBufferPrintToFPAsString(aft->buffer, aft->file_ctx->fp);
-    fflush(aft->file_ctx->fp);
+    aft->file_ctx->Write((const char *)MEMBUFFER_BUFFER(aft->buffer),
+        MEMBUFFER_OFFSET(aft->buffer), aft->file_ctx);
     aft->file_ctx->alerts += p->alerts.cnt;
     SCMutexUnlock(&aft->file_ctx->fp_mutex);
 
@@ -432,7 +430,8 @@ static TmEcode AlertDebugLogThreadDeinit(ThreadVars *t, void *data)
     return TM_ECODE_OK;
 }
 
-static void AlertDebugLogExitPrintStats(ThreadVars *tv, void *data) {
+static void AlertDebugLogExitPrintStats(ThreadVars *tv, void *data)
+{
     AlertDebugLogThread *aft = (AlertDebugLogThread *)data;
     if (aft == NULL) {
         return;
@@ -445,6 +444,7 @@ static void AlertDebugLogDeInitCtx(OutputCtx *output_ctx)
 {
     if (output_ctx != NULL) {
         LogFileCtx *logfile_ctx = (LogFileCtx *)output_ctx->data;
+        OutputUnregisterFileRotationFlag(&logfile_ctx->rotation_flag);
         if (logfile_ctx != NULL) {
             LogFileFreeCtx(logfile_ctx);
         }
@@ -472,6 +472,7 @@ static OutputCtx *AlertDebugLogInitCtx(ConfNode *conf)
     if (SCConfLogOpenGeneric(conf, file_ctx, DEFAULT_LOG_FILENAME) < 0) {
         goto error;
     }
+    OutputRegisterFileRotationFlag(&file_ctx->rotation_flag);
 
     OutputCtx *output_ctx = SCMalloc(sizeof(OutputCtx));
     if (unlikely(output_ctx == NULL))
@@ -492,14 +493,14 @@ error:
     return NULL;
 }
 
-static int AlertDebugLogCondition(ThreadVars *tv, const Packet *p) {
+static int AlertDebugLogCondition(ThreadVars *tv, const Packet *p)
+{
     return (p->alerts.cnt ? TRUE : FALSE);
 }
 
-static int AlertDebugLogLogger(ThreadVars *tv, void *thread_data, const Packet *p) {
-    if (PKT_IS_IPV4(p)) {
-        return AlertDebugLogger(tv, p, thread_data);
-    } else if (PKT_IS_IPV6(p)) {
+static int AlertDebugLogLogger(ThreadVars *tv, void *thread_data, const Packet *p)
+{
+    if (PKT_IS_IPV4(p) || PKT_IS_IPV6(p)) {
         return AlertDebugLogger(tv, p, thread_data);
     } else if (p->events.cnt > 0) {
         return AlertDebugLogDecoderEvent(tv, p, thread_data);
@@ -507,7 +508,8 @@ static int AlertDebugLogLogger(ThreadVars *tv, void *thread_data, const Packet *
     return TM_ECODE_OK;
 }
 
-void TmModuleAlertDebugLogRegister (void) {
+void TmModuleAlertDebugLogRegister (void)
+{
     tmm_modules[TMM_ALERTDEBUGLOG].name = MODULE_NAME;
     tmm_modules[TMM_ALERTDEBUGLOG].ThreadInit = AlertDebugLogThreadInit;
     tmm_modules[TMM_ALERTDEBUGLOG].Func = NULL;

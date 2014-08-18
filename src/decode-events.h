@@ -79,6 +79,12 @@ enum {
     IPV6_DSTOPTS_UNKNOWN_OPT,       /**< unknown DST opt */
     IPV6_DSTOPTS_ONLY_PADDING,      /**< all options in DST opts are padding */
 
+    IPV6_EXTHDR_RH_TYPE_0,          /**< RH 0 is deprecated as per rfc5095 */
+    IPV6_EXTHDR_ZERO_LEN_PADN,      /**< padN w/o data (0 len) */
+    IPV6_FH_NON_ZERO_RES_FIELD,     /**< reserved field not zero */
+    IPV6_DATA_AFTER_NONE_HEADER,    /**< data after 'none' (59) header */
+
+    IPV6_UNKNOWN_NEXT_HEADER,       /**< unknown/unsupported next header */
     IPV6_WITH_ICMPV4,               /**< IPv6 packet with ICMPv4 header */
 
     /* TCP EVENTS */
@@ -192,6 +198,7 @@ enum {
     STREAM_PKT_BROKEN_ACK,
     STREAM_RST_INVALID_ACK,
     STREAM_PKT_RETRANSMISSION,
+    STREAM_PKT_BAD_WINDOW_UPDATE,
 
     STREAM_REASSEMBLY_SEGMENT_BEFORE_BASE_SEQ,
     STREAM_REASSEMBLY_NO_SEGMENT,

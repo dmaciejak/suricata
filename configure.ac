@@ -1,7 +1,8 @@
 #TODO A better place for default CFLAGS?
 
 
-    AC_INIT(suricata, 2.0dev)
+    AC_INIT(suricata, 2.1dev)
+    m4_ifndef([AM_SILENT_RULES], [m4_define([AM_SILENT_RULES],[])])AM_SILENT_RULES([yes])
     AC_CONFIG_HEADERS([config.h])
     AC_CONFIG_SRCDIR([src/suricata.c])
     AC_CONFIG_MACRO_DIR(m4)
@@ -170,6 +171,10 @@
     #check for os
     AC_MSG_CHECKING([host os])
 
+    # lua pkg-config name differs per OS
+    LUA_PC_NAME="lua5.1"
+    LUA_LIB_NAME="lua5.1"
+
     # If no host os was detected, try with uname
     if test -z "$host" ; then
 	    host="`uname`"
@@ -179,18 +184,23 @@
     e_magic_file="/usr/share/file/magic"
     case "$host" in
         *-*-*freebsd*)
+            LUA_PC_NAME="lua-5.1"
+            LUA_LIB_NAME="lua-5.1"
             CFLAGS="${CFLAGS} -DOS_FREEBSD"
             CPPFLAGS="${CPPFLAGS} -I/usr/local/include -I/usr/local/include/libnet11"
             LDFLAGS="${LDFLAGS} -L/usr/local/lib -L/usr/local/lib/libnet11"
             e_magic_file="/usr/share/misc/magic"
             ;;
         *-*-openbsd*)
+            LUA_PC_NAME="lua51"
             CFLAGS="${CFLAGS} -D__OpenBSD__"
             CPPFLAGS="${CPPFLAGS} -I/usr/local/include -I/usr/local/include/libnet-1.1"
             LDFLAGS="${LDFLAGS} -L/usr/local/lib -I/usr/local/lib/libnet-1.1"
             e_magic_file="/usr/local/share/misc/magic.mgc"
             ;;
         *darwin*|*Darwin*)
+            LUA_PC_NAME="lua-5.1"
+            LUA_LIB_NAME="lua-5.1"
             CFLAGS="${CFLAGS} -DOS_DARWIN"
             CPPFLAGS="${CPPFLAGS} -I/opt/local/include"
             LDFLAGS="${LDFLAGS} -L/opt/local/lib"
@@ -204,6 +214,8 @@
             WINDOWS_PATH="yes"
             ;;
         *-*-cygwin)
+            LUA_PC_NAME="lua"
+            LUA_LIB_NAME="lua"
             WINDOWS_PATH="yes"
             ;;
         *)
@@ -215,7 +227,7 @@
     # check if our target supports thread local storage
     AC_MSG_CHECKING(for thread local storage __thread support)
     AC_TRY_COMPILE([#include <stdlib.h>],
-        [ void somefunc (void) { static __thread int i; i = 1; i++; } ],
+        [ static __thread int i; i = 1; i++; ],
         [AC_DEFINE([TLS], [1], [Thread local storage])
          AC_MSG_RESULT([yes]) ],
         [AC_MSG_RESULT([no])])
@@ -638,12 +650,6 @@
 
     AS_IF([test "x$enable_unixsocket" = "xyes"], [AC_DEFINE([BUILD_UNIX_SOCKET], [1], [Unix socket support enabled])])
 
-    #enable support for NFQUEUE
-    AC_ARG_ENABLE(nfqueue,
-           AS_HELP_STRING([--enable-nfqueue], [Enable NFQUEUE support for inline IDP]),,[enable_nfqueue=no])
-    AS_IF([test "x$enable_nfqueue" = "xyes"], [
-        CFLAGS="$CFLAGS -DNFQ"
-
   # libnfnetlink
     case $host in
     *-*-mingw32*)
@@ -660,8 +666,6 @@
             CPPFLAGS="${CPPFLAGS} -I${with_libnfnetlink_includes}"
         fi
 
-        AC_CHECK_HEADER(libnfnetlink/libnfnetlink.h,,[AC_ERROR(libnfnetlink.h not found ...)])
-
         if test "$with_libnfnetlink_libraries" != "no"; then
             LDFLAGS="${LDFLAGS}  -L${with_libnfnetlink_libraries}"
         fi
@@ -677,10 +681,15 @@
             echo "   for headers etc. when the --with-libnfnetlink-inlcudes directive"
             echo "   is used"
             echo
-            exit 1
         fi
         ;;
     esac
+
+    #enable support for NFQUEUE
+    AC_ARG_ENABLE(nfqueue,
+           AS_HELP_STRING([--enable-nfqueue], [Enable NFQUEUE support for inline IDP]),,[enable_nfqueue=no])
+    AS_IF([test "x$enable_nfqueue" = "xyes"], [
+        CFLAGS="$CFLAGS -DNFQ"
 
   #libnetfilter_queue
     AC_ARG_WITH(libnetfilter_queue_includes,
@@ -763,6 +772,44 @@
         exit 1
     fi
   ])
+
+  # libnetfilter_log
+    AC_ARG_ENABLE(nflog,
+            AS_HELP_STRING([--enable-nflog],[Enable libnetfilter_log support]),
+                           [ enable_nflog="yes"],
+                           [ enable_nflog="no"])
+    AC_ARG_WITH(libnetfilter_log_includes,
+            [  --with-libnetfilter_log-includes=DIR  libnetfilter_log include directory],
+            [with_libnetfilter_log_includes="$withval"],[with_libnetfilter_log_includes="no"])
+    AC_ARG_WITH(libnetfilter_log_libraries,
+            [  --with-libnetfilter_log-libraries=DIR    libnetfilter_log library directory],
+            [with_libnetfilter_log_libraries="$withval"],[with_libnetfilter_log_libraries="no"])
+
+    if test "$enable_nflog" = "yes"; then
+        if test "$with_libnetfilter_log_includes" != "no"; then
+            CPPFLAGS="${CPPFLAGS} -I${with_libnetfilter_log_includes}"
+        fi
+
+        AC_CHECK_HEADER(libnetfilter_log/libnetfilter_log.h,,[AC_ERROR(libnetfilter_log.h not found ...)])
+
+        if test "$with_libnetfilter_log_libraries" != "no"; then
+            LDFLAGS="${LDFLAGS}  -L${with_libnetfilter_log_libraries}"
+        fi
+
+        NFLOG=""
+        AC_CHECK_LIB(netfilter_log, nflog_open,, NFLOG="no")
+
+        if test "$NFLOG" = "no"; then
+            echo
+            echo "   ERROR!  libnetfilter_log library not found, go get it"
+            echo "   from http://www.netfilter.org."
+            echo
+            exit 1
+        else
+            AC_DEFINE([HAVE_NFLOG],[1],[nflog available])
+            enable_nflog="yes"
+        fi
+    fi
 
   # prelude
     AC_ARG_ENABLE(prelude,
@@ -1204,7 +1251,7 @@
     *-*-linux*)
     AC_ARG_WITH(libcap_ng_includes,
             [  --with-libcap_ng-includes=DIR  libcap_ng include directory],
-            [with_libcap-ng_includes="$withval"],[with_libcap_ng_includes=no])
+            [with_libcap_ng_includes="$withval"],[with_libcap_ng_includes=no])
     AC_ARG_WITH(libcap_ng_libraries,
             [  --with-libcap_ng-libraries=DIR    libcap_ng library directory],
             [with_libcap_ng_libraries="$withval"],[with_libcap_ng_libraries="no"])
@@ -1433,6 +1480,87 @@
         fi
     fi
 
+  # liblua
+    AC_ARG_ENABLE(lua,
+	        AS_HELP_STRING([--enable-lua],[Enable Lua support]),
+	        [ enable_lua="yes"],
+	        [ enable_lua="no"])
+    AC_ARG_WITH(liblua_includes,
+            [  --with-liblua-includes=DIR  liblua include directory],
+            [with_liblua_includes="$withval"],[with_liblua_includes="no"])
+    AC_ARG_WITH(liblua_libraries,
+            [  --with-liblua-libraries=DIR    liblua library directory],
+            [with_liblua_libraries="$withval"],[with_liblua_libraries="no"])
+
+    if test "$enable_lua" = "yes"; then
+        if test "$with_liblua_includes" != "no"; then
+            CPPFLAGS="${CPPFLAGS} -I${with_liblua_includes}"
+        else
+            # lua lua51 lua5.1 lua-5.1
+            PKG_CHECK_MODULES([LUA], [lua], [LUA="yes"], [
+                PKG_CHECK_MODULES([LUA], [lua5.1], [LUA="yes"], [
+                    PKG_CHECK_MODULES([LUA], [lua-5.1], [LUA="yes"], [
+                        PKG_CHECK_MODULES([LUA], [lua51], [LUA="yes"], [
+                            LUA="no"
+                        ])
+                    ])
+                ])
+            ])
+            CPPFLAGS="${CPPFLAGS} ${LUA_CFLAGS}"
+        fi
+
+        AC_CHECK_HEADER(lualib.h,LUA="yes",LUA="no")
+        if test "$LUA" = "yes"; then
+            if test "$with_liblua_libraries" != "no"; then
+                LDFLAGS="${LDFLAGS}  -L${with_liblua_libraries}"
+                AC_CHECK_LIB(${LUA_LIB_NAME}, luaL_openlibs,, LUA="no")
+                if test "$LUA" = "no"; then
+                    echo
+                    echo "   ERROR!  liblua library not found, go get it"
+                    echo "   from http://lua.org/index.html or your distribution:"
+                    echo
+                    echo "   Ubuntu: apt-get install liblua-5.1-dev"
+                    echo "   CentOS/Fedora: yum install lua-devel"
+                    echo
+                    echo "   If you installed software in a non-standard prefix"
+                    echo "   consider adjusting the PKG_CONFIG_PATH environment variable"
+                    echo "   or use --with-liblua-libraries configure option."
+                    echo
+                    exit 1
+                fi
+            else
+                # lua lua51 lua5.1 lua-5.1
+                PKG_CHECK_MODULES([LUA], [lua], [LUA="yes"], [
+                    PKG_CHECK_MODULES([LUA], [lua5.1], [LUA="yes"], [
+                        PKG_CHECK_MODULES([LUA], [lua-5.1], [LUA="yes"], [
+                            PKG_CHECK_MODULES([LUA], [lua51], [LUA="yes"], [
+                                LUA="no"
+                            ])
+                        ])
+                    ])
+                ])
+                LDFLAGS="${LDFLAGS} ${LUA_LIBS}"
+            fi
+
+            AC_DEFINE([HAVE_LUA],[1],[liblua available])
+            enable_lua="yes"
+        else
+	        echo
+                echo "   ERROR!  liblua headers not found, go get them"
+                echo "   from http://lua.org/index.html or your distribution:"
+                echo
+                echo "   Ubuntu: apt-get install liblua-5.1-dev"
+                echo "   CentOS/Fedora: yum install lua-devel"
+                echo
+                echo "   If you installed software in a non-standard prefix"
+                echo "   consider adjusting the PKG_CONFIG_PATH environment variable"
+                echo "   or use --with-liblua-includes and --with-liblua-libraries"
+                echo "   configure option."
+                echo
+                exit 1
+        fi
+    fi
+
   # libluajit
     AC_ARG_ENABLE(luajit,
 	        AS_HELP_STRING([--enable-luajit],[Enable Luajit support]),
@@ -1478,7 +1606,9 @@
                 exit 1
             fi
 
+            AC_DEFINE([HAVE_LUA],[1],[lua support available])
             AC_DEFINE([HAVE_LUAJIT],[1],[libluajit available])
+            enable_lua="yes"
             enable_luajit="yes"
         else
 	        echo
@@ -1624,6 +1754,7 @@ SURICATA_BUILD_CONF="Suricata Configuration:
   AF_PACKET support:                       ${enable_af_packet}
   PF_RING support:                         ${enable_pfring}
   NFQueue support:                         ${enable_nfqueue}
+  NFLOG support:                           ${enable_nflog}
   IPFW support:                            ${enable_ipfw}
   DAG enabled:                             ${enable_dag}
   Napatech enabled:                        ${enable_napatech}
@@ -1635,6 +1766,7 @@ SURICATA_BUILD_CONF="Suricata Configuration:
   libjansson support:                      ${enable_jansson}
   Prelude support:                         ${enable_prelude}
   PCRE jit:                                ${pcre_jit_available}
+  LUA support:                             ${enable_lua}
   libluajit:                               ${enable_luajit}
   libgeoip:                                ${enable_geoip}
   Non-bundled htp:                         ${enable_non_bundled_htp}

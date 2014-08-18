@@ -66,7 +66,8 @@ __thread int profiling_keyword_entered = 0;
 static char *profiling_file_name = "";
 static const char *profiling_file_mode = "a";
 
-void SCProfilingKeywordsGlobalInit(void) {
+void SCProfilingKeywordsGlobalInit(void)
+{
     ConfNode *conf;
 
     conf = ConfGetNode("profiling.keywords");
@@ -99,22 +100,25 @@ void SCProfilingKeywordsGlobalInit(void) {
     }
 }
 
-void DoDump(SCProfileKeywordDetectCtx *rules_ctx, FILE *fp, const char *name) {
+void DoDump(SCProfileKeywordDetectCtx *rules_ctx, FILE *fp, const char *name)
+{
     int i;
     fprintf(fp, "  ----------------------------------------------"
+            "------------------------------------------------------"
             "----------------------------\n");
     fprintf(fp, "  Stats for: %s\n", name);
     fprintf(fp, "  ----------------------------------------------"
+            "------------------------------------------------------"
             "----------------------------\n");
-    fprintf(fp, "  %-16s %-11s %-8s %-8s %-11s %-11s %-11s %-11s\n", "Keyword", "Ticks", "Checks", "Matches", "Max Ticks", "Avg", "Avg Match", "Avg No Match");
+    fprintf(fp, "  %-16s %-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", "Keyword", "Ticks", "Checks", "Matches", "Max Ticks", "Avg", "Avg Match", "Avg No Match");
     fprintf(fp, "  ---------------- "
-                "----------- "
-                "-------- "
-                "-------- "
-                "----------- "
-                "----------- "
-                "----------- "
-                "----------- "
+                "--------------- "
+                "--------------- "
+                "--------------- "
+                "--------------- "
+                "--------------- "
+                "--------------- "
+                "--------------- "
         "\n");
     for (i = 0; i < DETECT_TBLSIZE; i++) {
         SCProfileKeywordData *d = &rules_ctx->data[i];
@@ -135,7 +139,7 @@ void DoDump(SCProfileKeywordDetectCtx *rules_ctx, FILE *fp, const char *name) {
         }
 
         fprintf(fp,
-            "  %-16s %-11"PRIu64" %-8"PRIu64" %-8"PRIu64" %-11"PRIu64" %-11.2f %-11.2f %-11.2f\n",
+            "  %-16s %-15"PRIu64" %-15"PRIu64" %-15"PRIu64" %-15"PRIu64" %-15.2f %-15.2f %-15.2f\n",
             sigmatch_table[i].name,
             ticks,
             d->checks,
@@ -148,7 +152,8 @@ void DoDump(SCProfileKeywordDetectCtx *rules_ctx, FILE *fp, const char *name) {
 }
 
 void
-SCProfilingKeywordDump(DetectEngineCtx *de_ctx) {
+SCProfilingKeywordDump(DetectEngineCtx *de_ctx)
+{
     int i;
     FILE *fp;
     struct timeval tval;
@@ -176,6 +181,7 @@ SCProfilingKeywordDump(DetectEngineCtx *de_ctx) {
     }
 
     fprintf(fp, "  ----------------------------------------------"
+            "------------------------------------------------------"
             "----------------------------\n");
     fprintf(fp, "  Date: %" PRId32 "/%" PRId32 "/%04d -- "
             "%02d:%02d:%02d\n", tms->tm_mon + 1, tms->tm_mday, tms->tm_year + 1900,
@@ -240,7 +246,8 @@ SCProfilingKeywordUpdateCounter(DetectEngineThreadCtx *det_ctx, int id, uint64_t
     }
 }
 
-SCProfileKeywordDetectCtx *SCProfilingKeywordInitCtx(void) {
+SCProfileKeywordDetectCtx *SCProfilingKeywordInitCtx(void)
+{
     SCProfileKeywordDetectCtx *ctx = SCMalloc(sizeof(SCProfileKeywordDetectCtx));
     if (ctx != NULL) {
         memset(ctx, 0x00, sizeof(SCProfileKeywordDetectCtx));
@@ -255,7 +262,8 @@ SCProfileKeywordDetectCtx *SCProfilingKeywordInitCtx(void) {
     return ctx;
 }
 
-static void DetroyCtx(SCProfileKeywordDetectCtx *ctx) {
+static void DetroyCtx(SCProfileKeywordDetectCtx *ctx)
+{
     if (ctx) {
         if (ctx->data != NULL)
             SCFree(ctx->data);
@@ -264,7 +272,8 @@ static void DetroyCtx(SCProfileKeywordDetectCtx *ctx) {
     }
 }
 
-void SCProfilingKeywordDestroyCtx(DetectEngineCtx *de_ctx) {
+void SCProfilingKeywordDestroyCtx(DetectEngineCtx *de_ctx)
+{
     if (de_ctx != NULL) {
         SCProfilingKeywordDump(de_ctx);
 
@@ -276,7 +285,8 @@ void SCProfilingKeywordDestroyCtx(DetectEngineCtx *de_ctx) {
     }
 }
 
-void SCProfilingKeywordThreadSetup(SCProfileKeywordDetectCtx *ctx, DetectEngineThreadCtx *det_ctx) {
+void SCProfilingKeywordThreadSetup(SCProfileKeywordDetectCtx *ctx, DetectEngineThreadCtx *det_ctx)
+{
     if (ctx == NULL)
         return;
 
@@ -297,7 +307,8 @@ void SCProfilingKeywordThreadSetup(SCProfileKeywordDetectCtx *ctx, DetectEngineT
     }
 }
 
-static void SCProfilingKeywordThreadMerge(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx) {
+static void SCProfilingKeywordThreadMerge(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx)
+{
     if (de_ctx == NULL || de_ctx->profile_keyword_ctx == NULL ||
         de_ctx->profile_keyword_ctx->data == NULL || det_ctx == NULL ||
         det_ctx->keyword_perf_data == NULL)
@@ -326,7 +337,8 @@ static void SCProfilingKeywordThreadMerge(DetectEngineCtx *de_ctx, DetectEngineT
     }
 }
 
-void SCProfilingKeywordThreadCleanup(DetectEngineThreadCtx *det_ctx) {
+void SCProfilingKeywordThreadCleanup(DetectEngineThreadCtx *det_ctx)
+{
     if (det_ctx == NULL || det_ctx->de_ctx == NULL || det_ctx->keyword_perf_data == NULL)
         return;
 
