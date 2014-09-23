@@ -43,23 +43,20 @@ typedef enum {
     DETECT_MODBUS_RA,       /** < RAnge operator */
 } DetectModbusMode;
 
-typedef struct DetectModbusFunction_ {
-    uint8_t     category;       /** < Modbus function code category to match */
-    uint8_t     function;       /** < Modbus function to match */
-    uint16_t    *subfunction;   /** < Modbus sub-function to match */
-} DetectModbusFunction;
-
 typedef struct DetectModbusValue_ {
     uint16_t            min;    /** < Modbus minimum [range] or equal value to match */
     uint16_t            max;    /** < Modbus maximum value [range] to match */
     DetectModbusMode    mode;   /** < Modbus operator used in the address/data signature */
 } DetectModbusValue;
 
-typedef struct DetectModbusAccess_ {
-    uint8_t             type;       /** < Modbus type to match */
-    DetectModbusValue   *address;   /** < Modbus address signature */
-    DetectModbusValue   *data;      /** < Modbus data signature */
-} DetectModbusAccess;
+typedef struct DetectModbus_ {
+    uint8_t             category;       /** < Modbus function code category to match */
+    uint8_t             function;       /** < Modbus function code to match */
+    uint16_t            *subfunction;   /** < Modbus subfunction to match */
+    uint8_t             type;           /** < Modbus access type to match */
+    DetectModbusValue   *address;       /** < Modbus address to match */
+    DetectModbusValue   *data;          /** < Modbus data to match */
+} DetectModbus;
 
 /* prototypes */
 void DetectModbusRegister (void);

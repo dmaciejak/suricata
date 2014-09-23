@@ -30,7 +30,7 @@
  *
  * \author David DIALLO <diallo@et.esiea.fr>
  *
- * Implements the Modbus function and Modbus access: * keyword
+ * Implements the Modbus function and access keywords
  * You can specify a:
  * - concrete function like Modbus:
  *     function 8, subfunction 4 (diagnostic: Force Listen Only Mode)
@@ -57,220 +57,65 @@
 /**
  * \brief Regex for parsing the Modbus function string
  */
-#define PARSE_REGEX_FUNCTION "^\\s*\"?\\s*(!?[A-z0-9]+)(,\\s*subfunction\\s+(\\d+))?\\s*\"?\\s*$"
+#define PARSE_REGEX_FUNCTION "^\\s*\"?\\s*function\\s*(!?[A-z0-9]+)(,\\s*subfunction\\s+(\\d+))?\\s*\"?\\s*$"
 static pcre         *function_parse_regex;
 static pcre_extra   *function_parse_regex_study;
 
 /**
  * \brief Regex for parsing the Modbus access string
  */
-#define PARSE_REGEX_ACCESS "^\\s*\"?\\s*(read|write)\\s*(discretes|coils|input|holding)?(,\\s*address\\s+([<>]?\\d+)(<>\\d+)?(,\\s*value\\s+([<>]?\\d+)(<>\\d+)?)?)?\\s*\"?\\s*$"
+#define PARSE_REGEX_ACCESS "^\\s*\"?\\s*access\\s*(read|write)\\s*(discretes|coils|input|holding)?(,\\s*address\\s+([<>]?\\d+)(<>\\d+)?(,\\s*value\\s+([<>]?\\d+)(<>\\d+)?)?)?\\s*\"?\\s*$"
 static pcre         *access_parse_regex;
 static pcre_extra   *access_parse_regex_study;
 
 #define MAX_SUBSTRINGS 30
 
-void DetectModbusFunctionRegisterTests(void);
-void DetectModbusAccessRegisterTests(void);
+void DetectModbusRegisterTests(void);
 
 /** \internal
  *
- * \brief this function will free memory associated with DetectModbusFunction
+ * \brief this function will free memory associated with DetectModbus
  *
- * \param ptr pointer to DetectModbusFunction
+ * \param ptr pointer to DetectModbus
  */
-static void DetectModbusFunctionFree(void *ptr) {
+static void DetectModbusFree(void *ptr) {
     SCEnter();
-    DetectModbusFunction *modbus = (DetectModbusFunction *) ptr;
+    DetectModbus *modbus = (DetectModbus *) ptr;
 
     if(modbus) {
         if (modbus->subfunction)
             SCFree(modbus->subfunction);
 
+        if (modbus->address)
+            SCFree(modbus->address);
+
+        if (modbus->data)
+            SCFree(modbus->data);
+
         SCFree(modbus);
     }
-    SCReturn;
 }
 
 /** \internal
  *
- * \brief This function is used to parse Modbus parameters passed via keyword: "modbus.function"
- *
- * \param str Pointer to the user provided id option
- *
- * \retval id_d pointer to DetectModbusData on success
- * \retval NULL on failure
- */
-static DetectModbusFunction *DetectModbusFunctionParse(char *str)
-{
-    SCEnter();
-    DetectModbusFunction *modbus = NULL;
-
-    char    arg[MAX_SUBSTRINGS], *ptr = arg;
-    int     ov[MAX_SUBSTRINGS], ret, res;
-
-    ret = pcre_exec(function_parse_regex, function_parse_regex_study, str, strlen(str), 0, 0, ov, MAX_SUBSTRINGS);
-
-    if (ret < 1) {
-        SCLogError(SC_ERR_PCRE_MATCH, "invalid modbus.function option");
-        goto error;
-    }
-
-    res = pcre_copy_substring(str, ov, MAX_SUBSTRINGS, 1, arg, MAX_SUBSTRINGS);
-    if (res < 0) {
-        SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
-        goto error;
-    }
-
-    /* We have a correct Modbus function option */
-    modbus = (DetectModbusFunction *) SCCalloc(1, sizeof(DetectModbusFunction));
-    if (unlikely(modbus == NULL))
-        goto error;
-
-    if (isdigit(ptr[0])) {
-        modbus->function = atoi((const char*) ptr);
-        SCLogDebug("will look for modbus function %d", modbus->function);
-
-        if (ret > 2) {
-            res = pcre_copy_substring(str, ov, MAX_SUBSTRINGS, 3, arg, MAX_SUBSTRINGS);
-            if (res < 0) {
-                SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
-                goto error;
-            }
-
-            /* We have a correct address option */
-            modbus->subfunction =(uint16_t *) SCCalloc(1, sizeof(uint16_t));
-            if (modbus->subfunction == NULL)
-                goto error;
-
-            *(modbus->subfunction) = atoi((const char*) arg);
-            SCLogDebug("and sub-function %d", *(modbus->subfunction));
-        }
-    } else {
-        uint8_t neg = 0;
-
-        if (ptr[0] == '!') {
-            neg = 1;
-            ptr++;
-        }
-
-        if (strcmp("assigned", ptr) == 0)
-            modbus->category = MODBUS_CAT_PUBLIC_ASSIGNED;
-        else if (strcmp("unassigned", ptr) == 0)
-            modbus->category = MODBUS_CAT_PUBLIC_UNASSIGNED;
-        else if (strcmp("public", ptr) == 0)
-            modbus->category = MODBUS_CAT_PUBLIC_ASSIGNED | MODBUS_CAT_PUBLIC_UNASSIGNED;
-        else if (strcmp("user", ptr) == 0)
-            modbus->category = MODBUS_CAT_USER_DEFINED;
-        else if (strcmp("reserved", ptr) == 0)
-            modbus->category = MODBUS_CAT_RESERVED;
-
-        if (neg)
-            modbus->category = ~modbus->category;
-        SCLogDebug("will look for modbus categorie function %d", modbus->category);
-    }
-
-    SCReturnPtr(modbus, "DetectModbusFunction");
-
-error:
-    if (modbus != NULL)
-        DetectModbusFunctionFree(modbus);
-    return NULL;
-    SCReturnPtr(NULL, "DetectModbusFunction");
-}
-
-/** \internal
- *
- * \brief this function is used to add the parsed "id" option into the current signature
- *
- * \param de_ctx    Pointer to the Detection Engine Context
- * \param s         Pointer to the current Signature
- * \param str       Pointer to the user provided "id" option
- *
- * \retval 0 on Success or -1 on Failure
- */
-static int DetectModbusFunctionSetup(DetectEngineCtx *de_ctx,
-                                     Signature       *s,
-                                     char            *str)
-{
-    SCEnter();
-    DetectModbusFunction    *modbus = NULL;
-    SigMatch                *sm = NULL;
-
-    if (s->alproto != ALPROTO_UNKNOWN && s->alproto != ALPROTO_MODBUS) {
-        SCLogError(SC_ERR_CONFLICTING_RULE_KEYWORDS, "rule contains conflicting keywords.");
-        goto error;
-    }
-
-    modbus = DetectModbusFunctionParse(str);
-    if (modbus == NULL)
-        goto error;
-
-    /* Okay so far so good, lets get this into a SigMatch and put it in the Signature. */
-    sm = SigMatchAlloc();
-    if (sm == NULL)
-        goto error;
-
-    sm->type    = DETECT_AL_MODBUS_FUNCTION;
-    sm->ctx     = (void *) modbus;
-
-    SigMatchAppendSMToList(s, sm, DETECT_SM_LIST_MODBUS_MATCH);
-    s->alproto = ALPROTO_MODBUS;
-
-    SCReturnInt(0);
-
-error:
-    if (modbus != NULL)
-        DetectModbusFunctionFree(modbus);
-    if (sm != NULL)
-        SCFree(sm);
-    SCReturnInt(-1);
-}
-
-/** \internal
- *
- * \brief this function will free memory associated with DetectModbusAccess
- *
- * \param ptr Pointer to DetectModbusAccess structure
- */
-static void DetectModbusAccessFree(void *ptr) {
-    SCEnter();
-    DetectModbusAccess *modbus = (DetectModbusAccess *) ptr;
-
-    if (modbus == NULL)
-        SCReturn;
-
-    if (modbus->address)
-        SCFree(modbus->address);
-
-    if (modbus->data)
-        SCFree(modbus->data);
-
-    SCFree(modbus);
-    SCReturn;
-}
-
-/** \internal
- *
- * \brief This function is used to parse Modbus parameters passed via keyword: "modbus.access"
+ * \brief This function is used to parse Modbus parameters in access mode
  *
  * \param str Pointer to the user provided id option
  *
  * \retval Pointer to DetectModbusData on success or NULL on failure
  */
-static DetectModbusAccess *DetectModbusAccessParse (char *str)
+static DetectModbus *DetectModbusAccessParse(char *str)
 {
     SCEnter();
-    DetectModbusAccess *modbus = NULL;
+    DetectModbus *modbus = NULL;
 
     char    arg[MAX_SUBSTRINGS];
     int     ov[MAX_SUBSTRINGS], ret, res;
 
     ret = pcre_exec(access_parse_regex, access_parse_regex_study, str, strlen(str), 0, 0, ov, MAX_SUBSTRINGS);
-    if (ret < 1) {
-        SCLogError(SC_ERR_PCRE_MATCH, "invalid modbus.access option");
+
+    if (ret < 1)
         goto error;
-    }
 
     res = pcre_copy_substring(str, ov, MAX_SUBSTRINGS, 1, arg, MAX_SUBSTRINGS);
     if (res < 0) {
@@ -279,7 +124,7 @@ static DetectModbusAccess *DetectModbusAccessParse (char *str)
     }
 
     /* We have a correct Modbus option */
-    modbus = (DetectModbusAccess *) SCCalloc(1, sizeof(DetectModbusAccess));
+    modbus = (DetectModbus *) SCCalloc(1, sizeof(DetectModbus));
     if (unlikely(modbus == NULL))
         goto error;
 
@@ -409,8 +254,96 @@ static DetectModbusAccess *DetectModbusAccessParse (char *str)
 
 error:
     if (modbus != NULL)
-        DetectModbusAccessFree(modbus);
-    SCReturnPtr(NULL, "DetectModbusAccess");
+        DetectModbusFree(modbus);
+
+    SCReturnPtr(NULL, "DetectModbus");
+}
+
+/** \internal
+ *
+ * \brief This function is used to parse Modbus parameters in function mode
+ *
+ * \param str Pointer to the user provided id option
+ *
+ * \retval id_d pointer to DetectModbusData on success
+ * \retval NULL on failure
+ */
+static DetectModbus *DetectModbusFunctionParse(char *str)
+{
+    SCEnter();
+    DetectModbus *modbus = NULL;
+
+    char    arg[MAX_SUBSTRINGS], *ptr = arg;
+    int     ov[MAX_SUBSTRINGS], res, ret;
+
+    ret = pcre_exec(function_parse_regex, function_parse_regex_study, str, strlen(str), 0, 0, ov, MAX_SUBSTRINGS);
+
+    if (ret < 1)
+        goto error;
+
+    res = pcre_copy_substring(str, ov, MAX_SUBSTRINGS, 1, arg, MAX_SUBSTRINGS);
+    if (res < 0) {
+        SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+        goto error;
+    }
+
+    /* We have a correct Modbus function option */
+    modbus = (DetectModbus *) SCCalloc(1, sizeof(DetectModbus));
+    if (unlikely(modbus == NULL))
+        goto error;
+
+    if (isdigit(ptr[0])) {
+        modbus->function = atoi((const char*) ptr);
+        SCLogDebug("will look for modbus function %d", modbus->function);
+
+        if (ret > 2) {
+            res = pcre_copy_substring(str, ov, MAX_SUBSTRINGS, 3, arg, MAX_SUBSTRINGS);
+            if (res < 0) {
+                SCLogError(SC_ERR_PCRE_GET_SUBSTRING, "pcre_get_substring failed");
+                goto error;
+            }
+
+            /* We have a correct address option */
+            modbus->subfunction =(uint16_t *) SCCalloc(1, sizeof(uint16_t));
+            if (modbus->subfunction == NULL)
+                goto error;
+
+            *(modbus->subfunction) = atoi((const char*) arg);
+            SCLogDebug("and subfunction %d", *(modbus->subfunction));
+        }
+    } else {
+        uint8_t neg = 0;
+
+        if (ptr[0] == '!') {
+            neg = 1;
+            ptr++;
+        }
+
+        if (strcmp("assigned", ptr) == 0)
+            modbus->category = MODBUS_CAT_PUBLIC_ASSIGNED;
+        else if (strcmp("unassigned", ptr) == 0)
+            modbus->category = MODBUS_CAT_PUBLIC_UNASSIGNED;
+        else if (strcmp("public", ptr) == 0)
+            modbus->category = MODBUS_CAT_PUBLIC_ASSIGNED | MODBUS_CAT_PUBLIC_UNASSIGNED;
+        else if (strcmp("user", ptr) == 0)
+            modbus->category = MODBUS_CAT_USER_DEFINED;
+        else if (strcmp("reserved", ptr) == 0)
+            modbus->category = MODBUS_CAT_RESERVED;
+        else if (strcmp("all", ptr) == 0)
+            modbus->category = MODBUS_CAT_ALL;
+
+        if (neg)
+            modbus->category = ~modbus->category;
+        SCLogDebug("will look for modbus category function %d", modbus->category);
+    }
+
+    SCReturnPtr(modbus, "DetectModbusFunction");
+
+error:
+    if (modbus != NULL)
+        DetectModbusFree(modbus);
+
+    SCReturnPtr(NULL, "DetectModbus");
 }
 
 /** \internal
@@ -423,27 +356,30 @@ error:
  *
  * \retval 0 on Success or -1 on Failure
  */
-static int DetectModbusAccessSetup (DetectEngineCtx *de_ctx, Signature *s, char *str)
+static int DetectModbusSetup(DetectEngineCtx *de_ctx, Signature *s, char *str)
 {
     SCEnter();
-    DetectModbusAccess  *modbus = NULL;
-    SigMatch            *sm = NULL;
+    DetectModbus    *modbus = NULL;
+    SigMatch        *sm = NULL;
 
     if (s->alproto != ALPROTO_UNKNOWN && s->alproto != ALPROTO_MODBUS) {
         SCLogError(SC_ERR_CONFLICTING_RULE_KEYWORDS, "rule contains conflicting keywords.");
         goto error;
     }
 
-    modbus = DetectModbusAccessParse(str);
-    if (modbus == NULL)
-        goto error;
+    if ((modbus = DetectModbusFunctionParse(str)) == NULL) {
+        if ((modbus = DetectModbusAccessParse(str)) == NULL) {
+            SCLogError(SC_ERR_PCRE_MATCH, "invalid modbus option");
+            goto error;
+        }
+    }
 
     /* Okay so far so good, lets get this into a SigMatch and put it in the Signature. */
     sm = SigMatchAlloc();
     if (sm == NULL)
         goto error;
 
-    sm->type    = DETECT_AL_MODBUS_ACCESS;
+    sm->type    = DETECT_AL_MODBUS;
     sm->ctx     = (void *) modbus;
 
     SigMatchAppendSMToList(s, sm, DETECT_SM_LIST_MODBUS_MATCH);
@@ -453,7 +389,7 @@ static int DetectModbusAccessSetup (DetectEngineCtx *de_ctx, Signature *s, char 
 
 error:
     if (modbus != NULL)
-        DetectModbusAccessFree(modbus);
+        DetectModbusFree(modbus);
     if (sm != NULL)
         SCFree(sm);
     SCReturnInt(-1);
@@ -464,21 +400,13 @@ error:
  */
 void DetectModbusRegister(void) {
     SCEnter();
-    sigmatch_table[DETECT_AL_MODBUS_FUNCTION].name          = "modbus.function";
-    sigmatch_table[DETECT_AL_MODBUS_FUNCTION].Match         = NULL;
-    sigmatch_table[DETECT_AL_MODBUS_FUNCTION].AppLayerMatch = NULL;
-    sigmatch_table[DETECT_AL_MODBUS_FUNCTION].alproto       = ALPROTO_MODBUS;
-    sigmatch_table[DETECT_AL_MODBUS_FUNCTION].Setup         = DetectModbusFunctionSetup;
-    sigmatch_table[DETECT_AL_MODBUS_FUNCTION].Free          = DetectModbusFunctionFree;
-    sigmatch_table[DETECT_AL_MODBUS_FUNCTION].RegisterTests = DetectModbusFunctionRegisterTests;
-
-    sigmatch_table[DETECT_AL_MODBUS_ACCESS].name            = "modbus.access";
-    sigmatch_table[DETECT_AL_MODBUS_ACCESS].Match           = NULL;
-    sigmatch_table[DETECT_AL_MODBUS_ACCESS].AppLayerMatch   = NULL;
-    sigmatch_table[DETECT_AL_MODBUS_ACCESS].alproto         = ALPROTO_MODBUS;
-    sigmatch_table[DETECT_AL_MODBUS_ACCESS].Setup           = DetectModbusAccessSetup;
-    sigmatch_table[DETECT_AL_MODBUS_ACCESS].Free            = DetectModbusAccessFree;
-    sigmatch_table[DETECT_AL_MODBUS_ACCESS].RegisterTests   = DetectModbusAccessRegisterTests;
+    sigmatch_table[DETECT_AL_MODBUS].name          = "modbus";
+    sigmatch_table[DETECT_AL_MODBUS].Match         = NULL;
+    sigmatch_table[DETECT_AL_MODBUS].AppLayerMatch = NULL;
+    sigmatch_table[DETECT_AL_MODBUS].alproto       = ALPROTO_MODBUS;
+    sigmatch_table[DETECT_AL_MODBUS].Setup         = DetectModbusSetup;
+    sigmatch_table[DETECT_AL_MODBUS].Free          = DetectModbusFree;
+    sigmatch_table[DETECT_AL_MODBUS].RegisterTests = DetectModbusRegisterTests;
 
     const char *eb;
     int eo, opts = 0;
@@ -523,10 +451,10 @@ error:
 #include "util-unittest.h"
 
 /** \test Signature containing a function. */
-static int DetectModbusFunctionTest01(void)
+static int DetectModbusTest01(void)
 {
-    DetectEngineCtx         *de_ctx = NULL;
-    DetectModbusFunction    *modbus = NULL;
+    DetectEngineCtx *de_ctx = NULL;
+    DetectModbus    *modbus = NULL;
 
     int result = 0;
 
@@ -537,8 +465,8 @@ static int DetectModbusFunctionTest01(void)
     de_ctx->flags |= DE_QUIET;
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                       "(msg:\"Testing modbus.function\"; "
-                                       "modbus.function: 1;  sid:1;)");
+                                       "(msg:\"Testing modbus function\"; "
+                                       "modbus: function 1;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -549,7 +477,7 @@ static int DetectModbusFunctionTest01(void)
         goto end;
     }
 
-    modbus = (DetectModbusFunction *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if (modbus->function != 1) {
         printf("expected function %" PRIu8 ", got %" PRIu8 ": ", 1, modbus->function);
@@ -567,10 +495,10 @@ static int DetectModbusFunctionTest01(void)
 }
 
 /** \test Signature containing a function and a subfunction. */
-static int DetectModbusFunctionTest02(void)
+static int DetectModbusTest02(void)
 {
-    DetectEngineCtx         *de_ctx = NULL;
-    DetectModbusFunction    *modbus = NULL;
+    DetectEngineCtx *de_ctx = NULL;
+    DetectModbus    *modbus = NULL;
 
     int result = 0;
 
@@ -581,8 +509,8 @@ static int DetectModbusFunctionTest02(void)
     de_ctx->flags |= DE_QUIET;
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                       "(msg:\"Testing modbus.function and subfunction\"; "
-                                       "modbus.function: 8, subfunction 4;  sid:1;)");
+                                       "(msg:\"Testing modbus function and subfunction\"; "
+                                       "modbus: function 8, subfunction 4;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -593,7 +521,7 @@ static int DetectModbusFunctionTest02(void)
         goto end;
     }
 
-    modbus = (DetectModbusFunction *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if ((modbus->function != 8) || (*modbus->subfunction != 4)) {
         printf("expected function %" PRIu8 ", got %" PRIu8 ": ", 1, modbus->function);
@@ -612,10 +540,10 @@ static int DetectModbusFunctionTest02(void)
 }
 
 /** \test Signature containing a function category. */
-static int DetectModbusFunctionTest03(void)
+static int DetectModbusTest03(void)
 {
-    DetectEngineCtx         *de_ctx = NULL;
-    DetectModbusFunction    *modbus = NULL;
+    DetectEngineCtx *de_ctx = NULL;
+    DetectModbus    *modbus = NULL;
 
     int result = 0;
 
@@ -627,7 +555,7 @@ static int DetectModbusFunctionTest03(void)
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
                                        "(msg:\"Testing modbus.function\"; "
-                                       "modbus.function: reserved;  sid:1;)");
+                                       "modbus: function reserved;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -638,7 +566,7 @@ static int DetectModbusFunctionTest03(void)
         goto end;
     }
 
-    modbus = (DetectModbusFunction *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if (modbus->category != MODBUS_CAT_RESERVED) {
         printf("expected function %" PRIu8 ", got %" PRIu8 ": ", MODBUS_CAT_RESERVED, modbus->category);
@@ -656,10 +584,10 @@ static int DetectModbusFunctionTest03(void)
 }
 
 /** \test Signature containing a negative function category. */
-static int DetectModbusFunctionTest04(void)
+static int DetectModbusTest04(void)
 {
-    DetectEngineCtx         *de_ctx = NULL;
-    DetectModbusFunction    *modbus = NULL;
+    DetectEngineCtx *de_ctx = NULL;
+    DetectModbus    *modbus = NULL;
 
     uint8_t category = ~MODBUS_CAT_PUBLIC_ASSIGNED;
 
@@ -672,8 +600,8 @@ static int DetectModbusFunctionTest04(void)
     de_ctx->flags |= DE_QUIET;
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                       "(msg:\"Testing modbus.function\"; "
-                                       "modbus.function: !assigned;  sid:1;)");
+                                       "(msg:\"Testing modbus function\"; "
+                                       "modbus: function !assigned;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -684,7 +612,7 @@ static int DetectModbusFunctionTest04(void)
         goto end;
     }
 
-    modbus = (DetectModbusFunction *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if (modbus->category != category) {
         printf("expected function %" PRIu8 ", got %" PRIu8 ": ", ~MODBUS_CAT_PUBLIC_ASSIGNED, modbus->category);
@@ -702,10 +630,10 @@ static int DetectModbusFunctionTest04(void)
 }
 
 /** \test Signature containing a access type. */
-static int DetectModbusAccessTest01(void)
+static int DetectModbusTest05(void)
 {
-    DetectEngineCtx     *de_ctx = NULL;
-    DetectModbusAccess  *modbus = NULL;
+    DetectEngineCtx *de_ctx = NULL;
+    DetectModbus    *modbus = NULL;
 
     int result = 0;
 
@@ -717,7 +645,7 @@ static int DetectModbusAccessTest01(void)
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
                                        "(msg:\"Testing modbus.access\"; "
-                                       "modbus.access: read;  sid:1;)");
+                                       "modbus: access read;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -728,7 +656,7 @@ static int DetectModbusAccessTest01(void)
         goto end;
     }
 
-    modbus = (DetectModbusAccess *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if (modbus->type != MODBUS_TYP_READ) {
         printf("expected function %" PRIu8 ", got %" PRIu8 ": ", MODBUS_TYP_READ, modbus->type);
@@ -746,10 +674,10 @@ static int DetectModbusAccessTest01(void)
 }
 
 /** \test Signature containing a access function. */
-static int DetectModbusAccessTest02(void)
+static int DetectModbusTest06(void)
 {
-    DetectEngineCtx     *de_ctx = NULL;
-    DetectModbusAccess  *modbus = NULL;
+    DetectEngineCtx *de_ctx = NULL;
+    DetectModbus    *modbus = NULL;
 
     uint8_t type = (MODBUS_TYP_READ | MODBUS_TYP_DISCRETES);
 
@@ -763,7 +691,7 @@ static int DetectModbusAccessTest02(void)
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
                                        "(msg:\"Testing modbus.access\"; "
-                                       "modbus.access: read discretes;  sid:1;)");
+                                       "modbus: access read discretes;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -774,7 +702,7 @@ static int DetectModbusAccessTest02(void)
         goto end;
     }
 
-    modbus = (DetectModbusAccess *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if (modbus->type != type) {
         printf("expected function %" PRIu8 ", got %" PRIu8 ": ", type, modbus->type);
@@ -792,10 +720,10 @@ static int DetectModbusAccessTest02(void)
 }
 
 /** \test Signature containing a read access at an address. */
-static int DetectModbusAccessTest03(void)
+static int DetectModbusTest07(void)
 {
     DetectEngineCtx     *de_ctx = NULL;
-    DetectModbusAccess  *modbus = NULL;
+    DetectModbus        *modbus = NULL;
     DetectModbusMode    mode = DETECT_MODBUS_EQ;
 
     uint8_t type = MODBUS_TYP_READ;
@@ -809,7 +737,7 @@ static int DetectModbusAccessTest03(void)
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
                                        "(msg:\"Testing modbus.access\"; "
-                                       "modbus.access: read, address 1000;  sid:1;)");
+                                       "modbus: access read, address 1000;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -820,7 +748,7 @@ static int DetectModbusAccessTest03(void)
         goto end;
     }
 
-    modbus = (DetectModbusAccess *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if ((modbus->type != type) ||
         ((*modbus->address).mode != mode) ||
@@ -842,10 +770,10 @@ static int DetectModbusAccessTest03(void)
 }
 
 /** \test Signature containing a write access at a range of address. */
-static int DetectModbusAccessTest04(void)
+static int DetectModbusTest08(void)
 {
     DetectEngineCtx     *de_ctx = NULL;
-    DetectModbusAccess  *modbus = NULL;
+    DetectModbus        *modbus = NULL;
     DetectModbusMode    mode = DETECT_MODBUS_GT;
 
     uint8_t type = (MODBUS_TYP_WRITE | MODBUS_TYP_COILS);
@@ -859,7 +787,7 @@ static int DetectModbusAccessTest04(void)
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
                                        "(msg:\"Testing modbus.access\"; "
-                                       "modbus.access: write coils, address >500;  sid:1;)");
+                                       "modbus: access write coils, address >500;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -870,7 +798,7 @@ static int DetectModbusAccessTest04(void)
         goto end;
     }
 
-    modbus = (DetectModbusAccess *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if ((modbus->type != type) ||
         ((*modbus->address).mode != mode) ||
@@ -892,10 +820,10 @@ static int DetectModbusAccessTest04(void)
 }
 
 /** \test Signature containing a write access at a address a range of value. */
-static int DetectModbusAccessTest05(void)
+static int DetectModbusTest09(void)
 {
     DetectEngineCtx     *de_ctx = NULL;
-    DetectModbusAccess  *modbus = NULL;
+    DetectModbus        *modbus = NULL;
     DetectModbusMode    addressMode = DETECT_MODBUS_EQ;
     DetectModbusMode    valueMode = DETECT_MODBUS_RA;
 
@@ -910,7 +838,7 @@ static int DetectModbusAccessTest05(void)
 
     de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
                                        "(msg:\"Testing modbus.access\"; "
-                                       "modbus.access: write holding, address 100, value 500<>1000;  sid:1;)");
+                                       "modbus: access write holding, address 100, value 500<>1000;  sid:1;)");
 
     if (de_ctx->sig_list == NULL)
         goto end;
@@ -921,7 +849,7 @@ static int DetectModbusAccessTest05(void)
         goto end;
     }
 
-    modbus = (DetectModbusAccess *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
 
     if ((modbus->type != type) ||
         ((*modbus->address).mode != addressMode) ||
@@ -950,25 +878,18 @@ static int DetectModbusAccessTest05(void)
 #endif /* UNITTESTS */
 
 /**
- * \brief this function registers unit tests for DetectModbusFunction
+ * \brief this function registers unit tests for DetectModbus
  */
-void DetectModbusFunctionRegisterTests(void) {
+void DetectModbusRegisterTests(void) {
 #ifdef UNITTESTS /* UNITTESTS */
-    UtRegisterTest("DetectModbusFunctionTest01 - Testing function code", DetectModbusFunctionTest01, 1);
-    UtRegisterTest("DetectModbusFunctionTest02 - Testing subfunction code", DetectModbusFunctionTest02, 1);
-    UtRegisterTest("DetectModbusFunctionTest03 - Testing category function", DetectModbusFunctionTest03, 1);
-    UtRegisterTest("DetectModbusFunctionTest04 - Testing category function in negative", DetectModbusFunctionTest04, 1);
-#endif /* UNITTESTS */
-}
-/**
- * \brief this function registers unit tests for DetectModbusAccess
- */
-void DetectModbusAccessRegisterTests(void) {
-#ifdef UNITTESTS /* UNITTESTS */
-    UtRegisterTest("DetectModbusAccessTest01 - Testing access type", DetectModbusAccessTest01, 1);
-    UtRegisterTest("DetectModbusAccessTest02 - Testing access function", DetectModbusAccessTest02, 1);
-    UtRegisterTest("DetectModbusAccessTest03 - Testing access at address", DetectModbusAccessTest03, 1);
-    UtRegisterTest("DetectModbusAccessTest04 - Testing a range of address", DetectModbusAccessTest04, 1);
-    UtRegisterTest("DetectModbusAccessTest05 - Testing write a range of value", DetectModbusAccessTest05, 1);
+    UtRegisterTest("DetectModbusTest01 - Testing function", DetectModbusTest01, 1);
+    UtRegisterTest("DetectModbusTest02 - Testing function and subfunction", DetectModbusTest02, 1);
+    UtRegisterTest("DetectModbusTest03 - Testing category function", DetectModbusTest03, 1);
+    UtRegisterTest("DetectModbusTest04 - Testing category function in negative", DetectModbusTest04, 1);
+    UtRegisterTest("DetectModbusTest05 - Testing access type", DetectModbusTest05, 1);
+    UtRegisterTest("DetectModbusTest06 - Testing access function", DetectModbusTest06, 1);
+    UtRegisterTest("DetectModbusTest07 - Testing access at address", DetectModbusTest07, 1);
+    UtRegisterTest("DetectModbusTest08 - Testing a range of address", DetectModbusTest08, 1);
+    UtRegisterTest("DetectModbusTest09 - Testing write a range of value", DetectModbusTest09, 1);
 #endif /* UNITTESTS */
 }

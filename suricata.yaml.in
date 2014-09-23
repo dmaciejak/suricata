@@ -1122,6 +1122,10 @@ app-layer:
     # It is important to enable detection port and define Modbus port
     # to avoid false positive
     modbus:
+      # How many unreplied Modbus requests are considered a flood.
+      # If the limit is reached, app-layer-event:modbus.flooded; will match.
+      #request-flood: 500
+
       enabled: yes
       detection-ports:
         dp: 502

@@ -40,6 +40,7 @@
 #include "util-byte.h"
 #include "util-enum.h"
 #include "util-mem.h"
+#include "util-misc.h"
 
 #include "stream.h"
 
@@ -49,6 +50,7 @@
 
 #include "app-layer-detect-proto.h"
 
+#include "conf.h"
 #include "decode.h"
 
 SCEnumCharMap modbus_decoder_event_table[ ] = {
@@ -63,6 +65,9 @@ SCEnumCharMap modbus_decoder_event_table[ ] = {
     { "INVALID_VALUE",              MODBUS_DECODER_EVENT_INVALID_VALUE          },
     { "INVALID_EXCEPTION_CODE",     MODBUS_DECODER_EVENT_INVALID_EXCEPTION_CODE },
     { "VALUE_MISMATCH",             MODBUS_DECODER_EVENT_VALUE_MISMATCH         },
+
+    /* Modbus Decoder event */
+    { "FLOODED",                    MODBUS_DECODER_EVENT_FLOODED},
     { NULL,                         -1 },
 };
 
@@ -155,6 +160,11 @@ typedef struct ModbusHeader_ ModbusHeader;
 /* Macro to convert quantity value (in bit) into count value (in word): count = Ceil(quantity/8) */
 #define CEIL(quantity) (((quantity) + 7)>>3)
 
+/* Modbus Default unreplied Modbus requests are considered a flood */
+#define MODBUS_CONFIG_DEFAULT_REQUEST_FLOOD 500
+
+static uint32_t request_flood = MODBUS_CONFIG_DEFAULT_REQUEST_FLOOD;
+
 int ModbusStateGetEventInfo(const char *event_name, int *event_id, AppLayerEventType *event_type) {
     *event_id = SCMapEnumNameToValue(event_name, modbus_decoder_event_table);
 
@@ -199,8 +209,19 @@ int ModbusHasEvents(void *state) {
     return (((ModbusState *) state)->events > 0);
 }
 
-int ModbusGetAlstateProgress(void *tx, uint8_t direction) {
-    return (((ModbusTransaction *) tx)->replied);
+int ModbusGetAlstateProgress(void *modbus_tx, uint8_t direction) {
+    ModbusTransaction   *tx     = (ModbusTransaction *) modbus_tx;
+    ModbusState         *modbus = tx->modbus;
+
+    if (tx->replied == 1)
+        return 1;
+
+    /* Check flood limit */
+    if ((modbus->givenup == 1)  &&
+        ((modbus->transaction_max - tx->tx_num) > request_flood))
+        return 1;
+
+    return 0;
 }
 
 /** \brief Get value for 'complete' status in Modbus
@@ -278,13 +299,22 @@ static ModbusTransaction *ModbusTxAlloc(ModbusState *modbus) {
         return NULL;
 
     modbus->transaction_max++;
+    modbus->unreplied_cnt++;
+
+    /* Check flood limit */
+    if ((request_flood != 0) && (modbus->unreplied_cnt > request_flood)) {
+        ModbusSetEvent(modbus, MODBUS_DECODER_EVENT_FLOODED);
+        modbus->givenup = 1;
+    }
+
     modbus->curr = tx;
 
     SCLogDebug("modbus->transaction_max updated to %"PRIu64, modbus->transaction_max);
 
     TAILQ_INSERT_TAIL(&modbus->tx_list, tx, next);
 
-    tx->tx_num = modbus->transaction_max;
+    tx->modbus  = modbus;
+    tx->tx_num  = modbus->transaction_max;
 
     return tx;
 }
@@ -330,6 +360,14 @@ void ModbusStateTxFree(void *state, uint64_t tx_id) {
             else
                 modbus->events = 0;
         }
+
+        modbus->unreplied_cnt--;
+
+        /* Check flood limit */
+        if ((modbus->givenup == 1)                  &&
+            (request_flood != 0)                    &&
+            (modbus->unreplied_cnt < request_flood) )
+            modbus->givenup = 0;
 
         TAILQ_REMOVE(&modbus->tx_list, tx, next);
         ModbusTxFree(tx);
@@ -1269,7 +1307,7 @@ static uint16_t ModbusProbingParser(uint8_t     *input,
 
     /* Modbus header is 7 bytes long */
     if (input_len < sizeof(ModbusHeader))
-        return ALPROTO_FAILED;
+        return ALPROTO_UNKNOWN;
 
     /* MODBUS protocol is identified by the value 0. */
     if (header->protocolId != 0)
@@ -1315,6 +1353,17 @@ void RegisterModbusParsers(void)
                                               ModbusProbingParser);
             }
         }
+
+        ConfNode *p = ConfGetNode("app-layer.protocols.modbus.request-flood");
+        if (p != NULL) {
+            uint32_t value;
+            if (ParseSizeStringU32(p->val, &value) < 0) {
+                SCLogError(SC_ERR_MODBUS_CONFIG, "invalid value for request-flood %s", p->val);
+            } else {
+                request_flood = value;
+            }
+        }
+        SCLogInfo("Modbus request flood protection level: %u", request_flood);
     } else {
         SCLogInfo("Protocol detection and parser disabled for %s protocol.", proto_name);
         return;

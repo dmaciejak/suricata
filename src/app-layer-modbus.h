@@ -49,6 +49,7 @@ enum {
     MODBUS_DECODER_EVENT_INVALID_VALUE,
     MODBUS_DECODER_EVENT_INVALID_EXCEPTION_CODE,
     MODBUS_DECODER_EVENT_VALUE_MISMATCH,
+    MODBUS_DECODER_EVENT_FLOODED,
 };
 
 /* Modbus Function Code Categories. */
@@ -57,6 +58,7 @@ enum {
 #define MODBUS_CAT_PUBLIC_UNASSIGNED    (1<<1)
 #define MODBUS_CAT_USER_DEFINED         (1<<2)
 #define MODBUS_CAT_RESERVED             (1<<3)
+#define MODBUS_CAT_ALL                  0xFF
 
 /* Modbus Read/Write function and Access Types. */
 #define MODBUS_TYP_NONE                 0x0
@@ -78,7 +80,9 @@ enum {
 
 /* Modbus Transaction Structure, request/response. */
 typedef struct ModbusTransaction_ {
-    uint16_t    tx_num;         /**< internal: id */
+    struct ModbusState_ *modbus;
+
+    uint64_t    tx_num;         /**< internal: id */
     uint16_t    transactionId;
     uint16_t    length;
     uint8_t     function;
@@ -113,7 +117,9 @@ typedef struct ModbusState_ {
     TAILQ_HEAD(, ModbusTransaction_)    tx_list;    /**< transaction list */
     ModbusTransaction                   *curr;      /**< ptr to current tx */
     uint64_t                            transaction_max;
+    uint32_t                            unreplied_cnt;  /**< number of unreplied requests */
     uint16_t                            events;
+    uint8_t                             givenup;    /**< bool indicating flood. */
 } ModbusState;
 
 void RegisterModbusParsers(void);

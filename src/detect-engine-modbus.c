@@ -163,10 +163,14 @@ static int DetectEngineInspectModbusAddress(ModbusTransaction   *tx,
 
     /* Check if read/write address of request is at/in the address range of signature */
     if (access == MODBUS_TYP_READ) {
+        /* In the PDU Coils are addresses starting at zero */
+        /* therefore Coils numbered 1-16 are addressed as 0-15 */
         ret = DetectEngineInspectModbusValueMatch(address,
                                                   tx->read.address + 1,
-                                                  tx->read.quantity);
+                                                  tx->read.quantity - 1);
     } else {
+        /* In the PDU Registers are addresses starting at zero */
+        /* therefore Registers numbered 1-16 are addressed as 0-15 */
         if (tx->type & MODBUS_TYP_SINGLE)
             ret = DetectEngineInspectModbusValueMatch(address,
                                                       tx->write.address + 1,
@@ -174,7 +178,7 @@ static int DetectEngineInspectModbusAddress(ModbusTransaction   *tx,
         else
             ret = DetectEngineInspectModbusValueMatch(address,
                                                       tx->write.address + 1,
-                                                      tx->write.quantity);
+                                                      tx->write.quantity - 1);
     }
 
     SCReturnInt(ret);
@@ -205,17 +209,16 @@ int DetectEngineInspectModbus(ThreadVars            *tv,
     SCEnter();
     ModbusTransaction   *tx = (ModbusTransaction *)txv;
     SigMatch            *sm = s->sm_lists[DETECT_SM_LIST_MODBUS_MATCH];
+    DetectModbus        *modbus = (DetectModbus *) sm->ctx;
 
     int ret = 0;
 
-    if (sm->ctx == NULL) {
+    if (modbus == NULL) {
         SCLogDebug("no modbus state, no match");
         SCReturnInt(0);
     }
 
-    if (sm->type == DETECT_AL_MODBUS_FUNCTION) {
-        DetectModbusFunction *modbus = (DetectModbusFunction *) sm->ctx;
-
+    if (modbus->type == MODBUS_TYP_NONE) {
         if (modbus->category == MODBUS_CAT_NONE) {
             if (modbus->function == tx->function) {
                 if (modbus->subfunction != NULL) {
@@ -231,9 +234,7 @@ int DetectEngineInspectModbus(ThreadVars            *tv,
             SCLogDebug("looking for Modbus category function %d", modbus->category);
             ret = (tx->category & modbus->category)? 1 : 0;
         }
-    } else if (sm->type == DETECT_AL_MODBUS_ACCESS) {
-        DetectModbusAccess *modbus = (DetectModbusAccess *) sm->ctx;
-
+    } else {
         uint8_t access      = modbus->type & MODBUS_TYP_ACCESS_MASK;
         uint8_t function    = modbus->type & MODBUS_TYP_ACCESS_FUNCTION_MASK;
 
@@ -249,9 +250,6 @@ int DetectEngineInspectModbus(ThreadVars            *tv,
                 ret = 1;
             }
         }
-    } else {
-        SCLogDebug("no modbus type, no match");
-        SCReturnInt(0);
     }
 
     SCReturnInt(ret);
@@ -289,7 +287,7 @@ static uint8_t readInputsRegistersReq[] = {/* Transaction ID */          0x00, 0
                                            /* Unit ID */                 0x00,
                                            /* Function code */           0x04,
                                            /* Starting Address */        0x00, 0x08,
-                                           /* Quantity of Registers */   0x60};
+                                           /* Quantity of Registers */   0x00, 0x60};
 
 /* Modbus Application Protocol Specification V1.1b3 6.17: Read/Write Multiple registers */
 /* Example of a request to read six registers starting at register 4, */
@@ -373,8 +371,8 @@ static int DetectEngineInspectModbusTest01(void)
 
     de_ctx->flags |= DE_QUIET;
     s = de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                            "(msg:\"Testing modbus.function\"; "
-                                            "modbus.function: 23; sid:1;)");
+                                            "(msg:\"Testing modbus code function\"; "
+                                            "modbus: function 23; sid:1;)");
 
     if (s == NULL)
         goto end;
@@ -463,8 +461,8 @@ static int DetectEngineInspectModbusTest02(void)
     de_ctx->flags |= DE_QUIET;
 
     s = de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                           "(msg:\"Testing modbus.function and subfunction\"; "
-                                           "modbus.function: 8, subfunction 4;  sid:1;)");
+                                           "(msg:\"Testing modbus function and subfunction\"; "
+                                           "modbus: function 8, subfunction 4;  sid:1;)");
 
     if (s == NULL)
         goto end;
@@ -552,8 +550,8 @@ static int DetectEngineInspectModbusTest03(void)
     de_ctx->flags |= DE_QUIET;
 
     s = de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                           "(msg:\"Testing modbus.function\"; "
-                                           "modbus.function: reserved;  sid:1;)");
+                                           "(msg:\"Testing modbus category function\"; "
+                                           "modbus: function reserved;  sid:1;)");
 
     if (s == NULL)
         goto end;
@@ -642,8 +640,8 @@ static int DetectEngineInspectModbusTest04(void)
     de_ctx->flags |= DE_QUIET;
 
     s = de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                       "(msg:\"Testing modbus.function\"; "
-                                       "modbus.function: !assigned;  sid:1;)");
+                                       "(msg:\"Testing modbus category function\"; "
+                                       "modbus: function !assigned;  sid:1;)");
 
     if (s == NULL)
         goto end;
@@ -731,8 +729,8 @@ static int DetectEngineInspectModbusTest05(void)
     de_ctx->flags |= DE_QUIET;
 
     s = de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                           "(msg:\"Testing modbus.access\"; "
-                                           "modbus.access: read;  sid:1;)");
+                                           "(msg:\"Testing modbus access type\"; "
+                                           "modbus: access read;  sid:1;)");
 
     if (s == NULL)
         goto end;
@@ -821,8 +819,8 @@ static int DetectEngineInspectModbusTest06(void)
     de_ctx->flags |= DE_QUIET;
 
     s = de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                           "(msg:\"Testing modbus.access\"; "
-                                           "modbus.access: read input;  sid:1;)");
+                                           "(msg:\"Testing modbus access type\"; "
+                                           "modbus: access read input;  sid:1;)");
 
     if (s == NULL)
         goto end;
@@ -911,8 +909,8 @@ static int DetectEngineInspectModbusTest07(void)
     de_ctx->flags |= DE_QUIET;
 
     s = de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                           "(msg:\"Testing modbus.access\"; "
-                                           "modbus.access: read, address 30870;  sid:1;)");
+                                           "(msg:\"Testing modbus address access\"; "
+                                           "modbus: access read, address 30870;  sid:1;)");
 
     if (s == NULL)
         goto end;
@@ -999,9 +997,57 @@ static int DetectEngineInspectModbusTest08(void)
 
     de_ctx->flags |= DE_QUIET;
 
-    s= de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                          "(msg:\"Testing modbus.access\"; "
-                                          "modbus.access: read input, address >100;  sid:1;)");
+    /* readInputsRegistersReq, Starting Address = 0x08, Quantity of Registers = 0x60 */
+    /* Read access address from 9 to 104 */
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address <9;  sid:1;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address 9;  sid:2;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address 5<>9;  sid:3;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address <10;  sid:4;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address 5<>10;  sid:5;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address >103;  sid:6;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address 103<>110;  sid:7;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address 104;  sid:8;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address >104;  sid:9;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus access\"; "
+                                      "modbus: access read input, "
+                                      "address 104<>110;  sid:10;)");
 
     if (s == NULL)
         goto end;
@@ -1028,8 +1074,53 @@ static int DetectEngineInspectModbusTest08(void)
     /* do detect */
     SigMatchSignatures(&tv, de_ctx, det_ctx, p);
 
-    if (!(PacketAlertCheck(p, 1))) {
-        printf("sid 1 didn't match but should have: ");
+    if (PacketAlertCheck(p, 1)) {
+        printf("sid 1 did match but should not have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 2))) {
+        printf("sid 2 didn't match but should have: ");
+        goto end;
+    }
+
+    if (PacketAlertCheck(p, 3)) {
+        printf("sid 3 did match but should not have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 4))) {
+        printf("sid 4 didn't match but should have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 5))) {
+        printf("sid 5 didn't match but should have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 6))) {
+        printf("sid 6 didn't match but should have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 7))) {
+        printf("sid 7 didn't match but should have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 8))) {
+        printf("sid 8 didn't match but should have: ");
+        goto end;
+    }
+
+    if (PacketAlertCheck(p, 9)) {
+        printf("sid 9 did match but should not have: ");
+        goto end;
+    }
+
+    if (PacketAlertCheck(p, 10)) {
+        printf("sid 10 did match but should not have: ");
         goto end;
     }
 
@@ -1089,9 +1180,59 @@ static int DetectEngineInspectModbusTest09(void)
 
     de_ctx->flags |= DE_QUIET;
 
-    s = de_ctx->sig_list = SigInit(de_ctx, "alert modbus any any -> any any "
-                                           "(msg:\"Testing modbus.access\"; "
-                                           "modbus.access: write holding, address 16, value 20000<>30000;  sid:1;)");
+    /* readWriteMultipleRegistersReq, Write Starting Address = 0x0E, Quantity to Write = 0x03 */
+    /* Write access register address 15 = 0x1234 (4660)     */
+    /* Write access register address 16 = 0x5678 (22136)    */
+    /* Write access register address 17 = 0x9ABC (39612)    */
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 15, value <4660;  sid:1;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 16, value <22137;  sid:2;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 17, value 39612;  sid:3;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 15, value 4661;  sid:4;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 16, value 20000<>22136;  sid:5;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 17, value 30000<>39613;  sid:6;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 15, value 4659<>5000;  sid:7;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 16, value 22136<>30000;  sid:8;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 17, value >39611;  sid:9;)");
+
+    s = DetectEngineAppendSig(de_ctx, "alert modbus any any -> any any "
+                                      "(msg:\"Testing modbus write access\"; "
+                                      "modbus: access write holding, "
+                                      "address 15, value >4660;  sid:10;)");
 
     if (s == NULL)
         goto end;
@@ -1118,8 +1259,53 @@ static int DetectEngineInspectModbusTest09(void)
     /* do detect */
     SigMatchSignatures(&tv, de_ctx, det_ctx, p);
 
-    if (!(PacketAlertCheck(p, 1))) {
-        printf("sid 1 didn't match but should have: ");
+    if (PacketAlertCheck(p, 1)) {
+        printf("sid 1 did match but should not have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 2))) {
+        printf("sid 2 didn't match but should have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 3))) {
+        printf("sid 3 didn't match but should have: ");
+        goto end;
+    }
+
+    if (PacketAlertCheck(p, 4)) {
+        printf("sid 4 did match but should not have: ");
+        goto end;
+    }
+
+    if (PacketAlertCheck(p, 5)) {
+        printf("sid 5 did match but should not have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 6))) {
+        printf("sid 6 didn't match but should have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 7))) {
+        printf("sid 7 didn't match but should have: ");
+        goto end;
+    }
+
+    if (PacketAlertCheck(p, 8)) {
+        printf("sid 8 did match but should not have: ");
+        goto end;
+    }
+
+    if (!(PacketAlertCheck(p, 9))) {
+        printf("sid 9 didn't match but should have: ");
+        goto end;
+    }
+
+    if (PacketAlertCheck(p, 10)) {
+        printf("sid 10 did match but should not have: ");
         goto end;
     }
 

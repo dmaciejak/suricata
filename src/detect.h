@@ -1141,8 +1141,7 @@ enum {
     DETECT_IPREP,
 
     DETECT_AL_DNS_QUERY,
-    DETECT_AL_MODBUS_FUNCTION,
-    DETECT_AL_MODBUS_ACCESS,
+    DETECT_AL_MODBUS,
 
     /* make sure this stays last */
     DETECT_TBLSIZE,
