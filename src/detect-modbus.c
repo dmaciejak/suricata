@@ -104,7 +104,7 @@ static void DetectModbusFree(void *ptr) {
  *
  * \retval Pointer to DetectModbusData on success or NULL on failure
  */
-static DetectModbus *DetectModbusAccessParse(char *str)
+static DetectModbus *DetectModbusAccessParse(Signature *s, char *str)
 {
     SCEnter();
     DetectModbus *modbus = NULL;
@@ -180,12 +180,16 @@ static DetectModbus *DetectModbusAccessParse(char *str)
             if (unlikely(modbus->address == NULL))
                 goto error;
 
+            /* In case of PASS action, activate eXclusive mode */
+            if (s->action == ACTION_PASS)
+                modbus->address->mode = DETECT_MODBUS_X;
+
             if (arg[0] == '>') {
                 modbus->address->min    = atoi((const char*) (arg+1));
-                modbus->address->mode   = DETECT_MODBUS_GT;
+                modbus->address->mode   |= DETECT_MODBUS_GT;
             } else if (arg[0] == '<') {
                 modbus->address->min    = atoi((const char*) (arg+1));
-                modbus->address->mode   = DETECT_MODBUS_LT;
+                modbus->address->mode   |= DETECT_MODBUS_LT;
             } else {
                 modbus->address->min    = atoi((const char*) arg);
             }
@@ -200,7 +204,7 @@ static DetectModbus *DetectModbusAccessParse(char *str)
 
                 if (*arg != '\0') {
                     modbus->address->max    = atoi((const char*) (arg+2));
-                    modbus->address->mode   = DETECT_MODBUS_RA;
+                    modbus->address->mode   |= DETECT_MODBUS_RA;
                     SCLogDebug("and max address %d", modbus->address->max);
                 }
 
@@ -211,22 +215,26 @@ static DetectModbus *DetectModbusAccessParse(char *str)
                         goto error;
                     }
 
-                    if (modbus->address->mode != DETECT_MODBUS_EQ) {
+                    if ((modbus->address->mode & ~DETECT_MODBUS_X) != DETECT_MODBUS_EQ) {
                         SCLogError(SC_ERR_CONFLICTING_RULE_KEYWORDS, "rule contains conflicting keywords (address range and value).");
                         goto error;
                     }
 
-                    /* We have a correct address option */
+                    /* We have a correct data option */
                     modbus->data = (DetectModbusValue *) SCCalloc(1, sizeof(DetectModbusValue));
                     if (unlikely(modbus->data == NULL))
                         goto error;
 
+                    /* In case of PASS action, activate eXclusive mode */
+                    if (s->action == ACTION_PASS)
+                        modbus->data->mode = DETECT_MODBUS_X;
+
                     if (arg[0] == '>') {
                         modbus->data->min   = atoi((const char*) (arg+1));
-                        modbus->data->mode  = DETECT_MODBUS_GT;
+                        modbus->data->mode  |= DETECT_MODBUS_GT;
                     } else if (arg[0] == '<') {
                         modbus->data->min   = atoi((const char*) (arg+1));
-                        modbus->data->mode  = DETECT_MODBUS_LT;
+                        modbus->data->mode  |= DETECT_MODBUS_LT;
                     } else {
                         modbus->data->min   = atoi((const char*) arg);
                     }
@@ -241,7 +249,7 @@ static DetectModbus *DetectModbusAccessParse(char *str)
 
                         if (*arg != '\0') {
                             modbus->data->max   = atoi((const char*) (arg+2));
-                            modbus->data->mode  = DETECT_MODBUS_RA;
+                            modbus->data->mode  |= DETECT_MODBUS_RA;
                             SCLogDebug("and max value %d", modbus->data->max);
                         }
                     }
@@ -368,7 +376,7 @@ static int DetectModbusSetup(DetectEngineCtx *de_ctx, Signature *s, char *str)
     }
 
     if ((modbus = DetectModbusFunctionParse(str)) == NULL) {
-        if ((modbus = DetectModbusAccessParse(str)) == NULL) {
+        if ((modbus = DetectModbusAccessParse(s, str)) == NULL) {
             SCLogError(SC_ERR_PCRE_MATCH, "invalid modbus option");
             goto error;
         }
@@ -875,6 +883,113 @@ static int DetectModbusTest09(void)
 
     return result;
 }
+
+/** \test Signature containing a write access at a range of address (action = pass). */
+static int DetectModbusTest10(void)
+{
+    DetectEngineCtx     *de_ctx = NULL;
+    DetectModbus        *modbus = NULL;
+    DetectModbusMode    mode = DETECT_MODBUS_XGT;
+
+    uint8_t type = (MODBUS_TYP_WRITE | MODBUS_TYP_COILS);
+    int result = 0;
+
+    de_ctx = DetectEngineCtxInit();
+    if (de_ctx == NULL)
+        goto end;
+
+    de_ctx->flags |= DE_QUIET;
+
+    de_ctx->sig_list = SigInit(de_ctx, "pass modbus any any -> any any "
+                                       "(msg:\"Testing modbus.access\"; "
+                                       "modbus: access write coils, address >500;  sid:1;)");
+
+    if (de_ctx->sig_list == NULL)
+        goto end;
+
+    if ((de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH] == NULL) ||
+        (de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx == NULL)) {
+        printf("de_ctx->pmatch_tail == NULL && de_ctx->pmatch_tail->ctx == NULL: ");
+        goto end;
+    }
+
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+
+    if ((modbus->type != type) ||
+        ((*modbus->address).mode != mode) ||
+        ((*modbus->address).min != 500)) {
+        printf("expected function %" PRIu8 ", got %" PRIu8 ": ", type, modbus->type);
+        printf("expected mode %" PRIu8 ", got %" PRIu16 ": ", mode, (*modbus->address).mode);
+        printf("expected address %" PRIu8 ", got %" PRIu16 ": ", 500, (*modbus->address).min);
+        goto end;
+    }
+
+    result = 1;
+
+ end:
+    SigGroupCleanup(de_ctx);
+    SigCleanSignatures(de_ctx);
+    DetectEngineCtxFree(de_ctx);
+
+    return result;
+}
+
+/** \test Signature containing a write access at a address a range of value. */
+static int DetectModbusTest11(void)
+{
+    DetectEngineCtx     *de_ctx = NULL;
+    DetectModbus        *modbus = NULL;
+    DetectModbusMode    addressMode = DETECT_MODBUS_XEQ;
+    DetectModbusMode    valueMode = DETECT_MODBUS_XRA;
+
+    uint8_t type = (MODBUS_TYP_WRITE | MODBUS_TYP_HOLDING);
+    int result = 0;
+
+    de_ctx = DetectEngineCtxInit();
+    if (de_ctx == NULL)
+        goto end;
+
+    de_ctx->flags |= DE_QUIET;
+
+    de_ctx->sig_list = SigInit(de_ctx, "pass modbus any any -> any any "
+                                       "(msg:\"Testing modbus.access\"; "
+                                       "modbus: access write holding, address 100, value 500<>1000;  sid:1;)");
+
+    if (de_ctx->sig_list == NULL)
+        goto end;
+
+    if ((de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH] == NULL) ||
+        (de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx == NULL)) {
+        printf("de_ctx->pmatch_tail == NULL && de_ctx->pmatch_tail->ctx == NULL: ");
+        goto end;
+    }
+
+    modbus = (DetectModbus *) de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_MODBUS_MATCH]->ctx;
+
+    if ((modbus->type != type) ||
+        ((*modbus->address).mode != addressMode) ||
+        ((*modbus->address).min != 100)  ||
+        ((*modbus->data).mode != valueMode) ||
+        ((*modbus->data).min != 500)   ||
+        ((*modbus->data).max != 1000)) {
+        printf("expected function %" PRIu8 ", got %" PRIu8 ": ", type, modbus->type);
+        printf("expected address mode %" PRIu8 ", got %" PRIu16 ": ", addressMode, (*modbus->address).mode);
+        printf("expected address %" PRIu8 ", got %" PRIu16 ": ", 100, (*modbus->address).min);
+        printf("expected value mode %" PRIu8 ", got %" PRIu16 ": ", valueMode, (*modbus->data).mode);
+        printf("expected min value %" PRIu8 ", got %" PRIu16 ": ", 500, (*modbus->data).min);
+        printf("expected max value %" PRIu8 ", got %" PRIu16 ": ", 1000, (*modbus->data).max);
+        goto end;
+    }
+
+    result = 1;
+
+ end:
+    SigGroupCleanup(de_ctx);
+    SigCleanSignatures(de_ctx);
+    DetectEngineCtxFree(de_ctx);
+
+    return result;
+}
 #endif /* UNITTESTS */
 
 /**
@@ -891,5 +1006,7 @@ void DetectModbusRegisterTests(void) {
     UtRegisterTest("DetectModbusTest07 - Testing access at address", DetectModbusTest07, 1);
     UtRegisterTest("DetectModbusTest08 - Testing a range of address", DetectModbusTest08, 1);
     UtRegisterTest("DetectModbusTest09 - Testing write a range of value", DetectModbusTest09, 1);
+    UtRegisterTest("DetectModbusTest10 - Testing a range of address in PASS as action", DetectModbusTest10, 1);
+    UtRegisterTest("DetectModbusTest11 - Testing write a range of value in PASS as action", DetectModbusTest11, 1);
 #endif /* UNITTESTS */
 }

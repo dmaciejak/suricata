@@ -1022,11 +1022,13 @@ end:
  *  \param  modbus  Pointer the Modbus PDU state in which the value to be stored
  *  \param  input   Pointer the received input data
  *  \param  offset  Offset of the received input data pointer
+ *
+ *  \retval On success returns 0 or on failure returns -1.
  */
-static void ModbusParseResponsePDU(ModbusTransaction    *tx,
-                                   ModbusState          *modbus,
-                                   uint8_t              *input,
-                                   uint16_t             *offset)
+static int ModbusParseResponsePDU(ModbusTransaction    *tx,
+                                  ModbusState          *modbus,
+                                  uint8_t              *input,
+                                  uint16_t             *offset)
 {
     SCEnter();
     uint8_t count, error = FALSE, function, mei;
@@ -1074,16 +1076,41 @@ static void ModbusParseResponsePDU(ModbusTransaction    *tx,
                     goto end;
             }
 
-            if (tx->type & MODBUS_TYP_READ)
+            if (tx->type & MODBUS_TYP_READ) {
                 ModbusParseReadResponse(tx, modbus, input, offset);
+
+                /* Duplicate Modbus Transaction for Read/Write Multiple Registers   */
+                /* in order to manage Read and Write Access separately .            */
+                if (tx->type & MODBUS_TYP_WRITE) {
+                    ModbusTransaction *ttx;
+
+                    /* Allocate a new Transaction Context */
+                    ttx = ModbusTxAlloc(modbus);
+                    if (ttx == NULL)
+                        SCReturnInt(-1);
+
+                    /* Duplicated transaction managed only Read Access. */
+                    ttx->type           = tx->type & ~MODBUS_TYP_WRITE;
+                    ttx->read.address   = tx->read.address;
+                    ttx->read.quantity  = tx->read.quantity;
+
+                    /* Mark duplicate transaction as completed */
+                    ttx->replied = 1;
+
+                    /* Original transaction managed : function, category */
+                    /* and Write access. */
+                    tx->type &= ~MODBUS_TYP_READ;
+                }
+            }
             /* Read/Write response contents none write response part */
-            else if (tx->type & MODBUS_TYP_WRITE)
+            else if (tx->type & MODBUS_TYP_WRITE) {
                 ModbusParseWriteResponse(tx, modbus, input, offset);
+            }
         }
     }
 
 end:
-    SCReturn;
+    SCReturnInt(0);
 }
 
 /** \internal
@@ -1251,7 +1278,8 @@ static int ModbusParseResponse(Flow                 *f,
             tx->length = header.length;
 
             /* Extract and check MODBUS PDU */
-            ModbusParseResponsePDU(tx, modbus, ptr, &offset);
+            if (ModbusParseResponsePDU(tx, modbus, ptr, &offset))
+                SCReturnInt(0);
 
             /* Mark as completed */
             tx->replied = 1;
@@ -1715,12 +1743,19 @@ static int ModbusParserTest03(void) {
         goto end;
     }
 
+    if (modbus_state->transaction_max !=1) {
+        printf("expected transaction_max %" PRIu8 ", got %" PRIu64 ": ", 1, modbus_state->transaction_max);
+        goto end;
+    }
+
     ModbusTransaction *tx = ModbusGetTx(modbus_state, 0);
 
-    if ((tx->function != 23) || (tx->read.address != 0x03) || (tx->read.quantity != 6) ||
+    if ((tx->function != 23) || (tx->type != 0xA3) ||
+        (tx->read.address != 0x03) || (tx->read.quantity != 6) ||
         (tx->write.address != 0x0E) || (tx->write.quantity != 3) || (tx->write.count != 6) ||
         (tx->data[0] != 0x1234) || (tx->data[1] != 0x5678) || (tx->data[2] != 0x9ABC)) {
         printf("expected function %" PRIu8 ", got %" PRIu8 ": ", 23, tx->function);
+        printf("expected type %" PRIu8 ", got %" PRIu8 ": ", 0xA3, tx->type);
         printf("expected read address %" PRIu8 ", got %" PRIu8 ": ", 0x03, tx->read.address);
         printf("expected read quantity %" PRIu8 ", got %" PRIu8 ": ", 6, tx->read.quantity);
         printf("expected write address %" PRIu8 ", got %" PRIu8 ": ", 0x0E, tx->write.address);
@@ -1742,8 +1777,39 @@ static int ModbusParserTest03(void) {
     }
     SCMutexUnlock(&f.m);
 
-    if (modbus_state->transaction_max !=1) {
-        printf("expected transaction_max %" PRIu8 ", got %" PRIu64 ": ", 1, modbus_state->transaction_max);
+    /* After transaction management, a new transaction is created. */
+    /* Original transaction managed : function, category and Write access. */
+    tx = ModbusGetTx(modbus_state, 0);
+
+    if ((tx->function != 23) || (tx->type != 0xA2) ||
+        (tx->write.address != 0x0E) || (tx->write.quantity != 3) || (tx->write.count != 6) ||
+        (tx->data[0] != 0x1234) || (tx->data[1] != 0x5678) || (tx->data[2] != 0x9ABC)) {
+        printf("expected function %" PRIu8 ", got %" PRIu8 ": ", 23, tx->function);
+        printf("expected type %" PRIu8 ", got %" PRIu8 ": ", 0xA2, tx->type);
+        printf("expected write address %" PRIu8 ", got %" PRIu8 ": ", 0x0E, tx->write.address);
+        printf("expected write quantity %" PRIu8 ", got %" PRIu8 ": ", 3, tx->write.quantity);
+        printf("expected write count %" PRIu8 ", got %" PRIu8 ": ", 6, tx->write.count);
+        printf("expected data %" PRIu8 ", got %" PRIu8 ": ", 0x1234, tx->data[0]);
+        printf("expected data %" PRIu8 ", got %" PRIu8 ": ", 0x5678, tx->data[1]);
+        printf("expected data %" PRIu8 ", got %" PRIu8 ": ", 0x9ABC, tx->data[2]);
+        goto end;
+    }
+
+    /* Duplicated transaction managed only Read Access. */
+    tx = ModbusGetTx(modbus_state, 1);
+
+
+    if ((tx->function != 0) || (tx->type != 0xA1) ||
+        (tx->read.address != 0x03) || (tx->read.quantity != 6)) {
+        printf("expected function %" PRIu8 ", got %" PRIu8 ": ", 0, tx->function);
+        printf("expected type %" PRIu8 ", got %" PRIu8 ": ", 0xA1, tx->type);
+        printf("expected read address %" PRIu8 ", got %" PRIu8 ": ", 0x03, tx->read.address);
+        printf("expected read quantity %" PRIu8 ", got %" PRIu8 ": ", 6, tx->read.quantity);
+        goto end;
+    }
+
+    if (modbus_state->transaction_max != 2) {
+        printf("expected transaction_max %" PRIu8 ", got %" PRIu64 ": ", 2, modbus_state->transaction_max);
         goto end;
     }
 

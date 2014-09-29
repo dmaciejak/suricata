@@ -36,11 +36,18 @@
 
 #include "app-layer-modbus.h"
 
+/* Modbus Detection in eXclusive mode. */
+#define DETECT_MODBUS_X     0x10
+
 typedef enum {
-    DETECT_MODBUS_EQ = 0,   /** < EQual operator */
-    DETECT_MODBUS_LT,       /** < "Less Than" operator */
-    DETECT_MODBUS_GT,       /** < "Greater Than" operator */
-    DETECT_MODBUS_RA,       /** < RAnge operator */
+    DETECT_MODBUS_EQ    = 0x0,  /** < EQual operator */
+    DETECT_MODBUS_LT    = 0x1,  /** < "Less Than" operator */
+    DETECT_MODBUS_GT    = 0x2,  /** < "Greater Than" operator */
+    DETECT_MODBUS_RA    = 0x3,  /** < RAnge operator */
+    DETECT_MODBUS_XEQ   = 0x10, /** < eXclusive EQual operator */
+    DETECT_MODBUS_XLT   = 0x11, /** < "eXclusive Less Than" operator */
+    DETECT_MODBUS_XGT   = 0x12, /** < "eXclusive Greater Than" operator */
+    DETECT_MODBUS_XRA   = 0x13, /** < eXclusive RAnge operator */
 } DetectModbusMode;
 
 typedef struct DetectModbusValue_ {
